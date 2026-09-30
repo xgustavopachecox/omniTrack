@@ -5,8 +5,6 @@ import Link from 'next/link';
 import { OmniStore } from '@/lib/store';
 import { Profile, NutritionLog, WorkoutSession, BodyMetric, WaterLog, SecondBrainNote } from '@/lib/types';
 import { calculateMacroPercentages, calculateWeeklyStreak } from '@/lib/consistency';
-import { computeMuscleHeatmap } from '@/lib/heatmap';
-import { BodyHeatmap } from '@/components/ui/BodyHeatmap';
 import {
   Flame,
   Droplets,
@@ -94,7 +92,6 @@ export default function DashboardPage() {
     prevWeight,
     todayMacros,
     weeklyStreakData,
-    heatmapData,
   } = useMemo(() => {
     const todayNutrition = nutritionLogs.filter(
       (l) => l.logged_at.split('T')[0] === todayStr
@@ -130,7 +127,6 @@ export default function DashboardPage() {
 
     const tMacros = calculateMacroPercentages(totProt, totCarbs, totFats);
     const wStreak = calculateWeeklyStreak(workoutSessions, profile?.weekly_workout_target || 4);
-    const hData = computeMuscleHeatmap(workoutSessions, 7);
 
     return {
       totalCalories: totCal,
@@ -154,7 +150,6 @@ export default function DashboardPage() {
       prevWeight: pWeight,
       todayMacros: tMacros,
       weeklyStreakData: wStreak,
-      heatmapData: hData,
     };
   }, [nutritionLogs, waterLogs, workoutSessions, bodyMetrics, notes, profile, todayStr]);
 
@@ -412,9 +407,6 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
-
-      {/* BODY HEATMAP COMPACT WIDGET */}
-      <BodyHeatmap data={heatmapData} compact />
 
       {/* Secondary Row: Workout Status & Quick Widgets */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

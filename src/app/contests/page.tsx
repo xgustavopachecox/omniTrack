@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Dumbbell,
   Brain,
+  Trophy,
   Sparkles,
   Plus,
   Play,
@@ -728,67 +729,74 @@ export default function ContestsPage() {
           </span>
         </div>
 
-        <div className="flex items-center gap-3 overflow-x-auto pb-2 scrollbar-none">
-          {contests.map((contest) => {
-            const isSelected = currentContest?.id === contest.id;
+        {contests.length === 0 ? (
+          <div className="glass-card p-10 rounded-2xl text-center text-slate-500 space-y-2">
+            <Trophy className="h-10 w-10 mx-auto text-slate-600 opacity-50" />
+            <p className="text-sm font-medium">Nenhum concurso em andamento. Adicione um novo concurso ou importe um edital em PDF com IA.</p>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3 overflow-x-auto pb-2 scrollbar-none">
+            {contests.map((contest) => {
+              const isSelected = currentContest?.id === contest.id;
 
-            return (
-              <div
-                key={contest.id}
-                onClick={() => handleSelectContest(contest.id)}
-                className={`flex-shrink-0 p-4 rounded-2xl border cursor-pointer transition-all duration-200 min-w-[240px] max-w-[280px] flex flex-col justify-between space-y-3 ${
-                  isSelected
-                    ? 'bg-slate-900 border-cyan-500 shadow-lg shadow-cyan-500/10 ring-1 ring-cyan-500/40'
-                    : 'bg-slate-950/60 border-slate-800/90 hover:border-slate-700'
-                }`}
-              >
-                <div className="flex justify-between items-start">
-                  <span
-                    className="w-3 h-3 rounded-full flex-shrink-0 mt-1 shadow-sm"
-                    style={{ backgroundColor: contest.color_tag || '#3b82f6' }}
-                  />
-                  <div className="flex items-center gap-1.5">
-                    {contest.institution && (
-                      <span className="text-[10px] font-bold text-slate-300 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
-                        {contest.institution}
-                      </span>
-                    )}
-                    {isSelected && (
-                      <span className="text-[10px] font-extrabold text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-500/30">
-                        ATIVO
-                      </span>
+              return (
+                <div
+                  key={contest.id}
+                  onClick={() => handleSelectContest(contest.id)}
+                  className={`flex-shrink-0 p-4 rounded-2xl border cursor-pointer transition-all duration-200 min-w-[240px] max-w-[280px] flex flex-col justify-between space-y-3 ${
+                    isSelected
+                      ? 'bg-slate-900 border-cyan-500 shadow-lg shadow-cyan-500/10 ring-1 ring-cyan-500/40'
+                      : 'bg-slate-950/60 border-slate-800/90 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex justify-between items-start">
+                    <span
+                      className="w-3 h-3 rounded-full flex-shrink-0 mt-1 shadow-sm"
+                      style={{ backgroundColor: contest.color_tag || '#3b82f6' }}
+                    />
+                    <div className="flex items-center gap-1.5">
+                      {contest.institution && (
+                        <span className="text-[10px] font-bold text-slate-300 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
+                          {contest.institution}
+                        </span>
+                      )}
+                      {isSelected && (
+                        <span className="text-[10px] font-extrabold text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-500/30">
+                          ATIVO
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="font-extrabold text-sm text-white truncate">{contest.title}</h3>
+                    {contest.target_date && (
+                      <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1">
+                        <Calendar className="h-3 w-3 text-cyan-400" />
+                        Prova: {new Date(contest.target_date).toLocaleDateString('pt-BR')}
+                      </p>
                     )}
                   </div>
-                </div>
 
-                <div>
-                  <h3 className="font-extrabold text-sm text-white truncate">{contest.title}</h3>
-                  {contest.target_date && (
-                    <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1">
-                      <Calendar className="h-3 w-3 text-cyan-400" />
-                      Prova: {new Date(contest.target_date).toLocaleDateString('pt-BR')}
-                    </p>
+                  {contests.length > 1 && (
+                    <div className="flex justify-end pt-1">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteContest(contest.id, contest.title);
+                        }}
+                        className="text-slate-500 hover:text-red-400 p-1 transition"
+                        title="Excluir Concurso"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   )}
                 </div>
-
-                {contests.length > 1 && (
-                  <div className="flex justify-end pt-1">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteContest(contest.id, contest.title);
-                      }}
-                      className="text-slate-500 hover:text-red-400 p-1 transition"
-                      title="Excluir Concurso"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Global Status Toast */}

@@ -273,8 +273,7 @@ export default function SecondBrainPage() {
       {filteredNotes.length === 0 ? (
         <div className="glass-card p-12 rounded-2xl text-center text-slate-500 space-y-3">
           <Brain className="h-12 w-12 mx-auto text-slate-600 opacity-40" />
-          <p className="text-base font-semibold text-slate-400">Nenhuma anotação encontrada.</p>
-          <p className="text-xs">Use o botão &quot;Captura Rápida&quot; acima para registrar seu primeiro pensamento ou estudo.</p>
+          <p className="text-base font-semibold text-slate-400">Seu Second Brain está vazio. Crie sua primeira nota rápida.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">

@@ -10,9 +10,7 @@ import {
   GeminiWorkoutSessionResponse,
 } from '@/lib/types';
 import { VoiceTextInput } from '@/components/ui/VoiceTextInput';
-import { BodyHeatmap } from '@/components/ui/BodyHeatmap';
 import { calculateWeeklyStreak } from '@/lib/consistency';
-import { computeMuscleHeatmap } from '@/lib/heatmap';
 import {
   Dumbbell,
   Sparkles,
@@ -174,15 +172,14 @@ export default function WorkoutPage() {
   // Manual Session Modal Openers
   const openNewSessionModal = () => {
     setEditingSessionId(null);
-    setSessionTitle('Treino de Força');
+    setSessionTitle('');
     setSessionDate(new Date().toISOString().split('T')[0]);
     setManualExercises([
       {
-        exercise_name: 'Supino Reto com Barra',
+        exercise_name: '',
         muscle_group: 'Peito',
         sets: [
-          { set: 1, reps: 10, weight_each_side_kg: 30, total_weight_kg: 80 },
-          { set: 2, reps: 8, weight_each_side_kg: 35, total_weight_kg: 90 },
+          { set: 1, reps: 0, weight_each_side_kg: 0, total_weight_kg: 0 },
         ],
         observation: '',
       },
@@ -434,10 +431,6 @@ export default function WorkoutPage() {
     return calculateWeeklyStreak(sessions, 4);
   }, [sessions]);
 
-  const heatmapData = useMemo(() => {
-    return computeMuscleHeatmap(sessions, 7);
-  }, [sessions]);
-
   return (
     <div className="space-y-8 animate-fadeIn max-w-5xl mx-auto">
       {/* Header Banner */}
@@ -543,16 +536,12 @@ export default function WorkoutPage() {
             />
           </div>
 
-          {/* MAPA DE CALOR MUSCULAR POR VOLUME SEMANAL (BODY HEATMAP) */}
-          <BodyHeatmap data={heatmapData} />
-
           {/* Timeline: Weekly Blocks */}
           <div className="space-y-8">
             {groupedWeeklySessions.length === 0 ? (
               <div className="glass-card p-10 rounded-2xl text-center text-slate-500 space-y-2">
                 <Dumbbell className="h-10 w-10 mx-auto text-slate-600 opacity-50" />
-                <p className="text-sm font-medium">Nenhuma sessão de treino registrada ainda.</p>
-                <p className="text-xs">Use a gravação por voz ou o botão "+ Treino Manual" para computar suas séries.</p>
+                <p className="text-sm font-medium">Nenhum treino registrado nesta semana. Clique em Registrar Treino para começar.</p>
               </div>
             ) : (
               groupedWeeklySessions.map((weekGroup) => (

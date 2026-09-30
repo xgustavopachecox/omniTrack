@@ -297,28 +297,6 @@ export interface GeminiPhysiqueAssessmentResponse {
   training_adjustments: string;
 }
 
-export type HeatmapIntensityLevel = 'low' | 'moderate' | 'high' | 'very_high';
-
-export interface MuscleHeatmapItem {
-  muscle: string; // Peito, Costas, Quadríceps, Isquiotibiais, Ombros, Tríceps, Bíceps, Abdômen, Panturrilhas
-  totalSets: number;
-  totalVolumeKg: number;
-  exerciseCount: number;
-  level: HeatmapIntensityLevel;
-  label: string;
-  colorHex: string;
-  bgColorClass: string;
-  borderColorClass: string;
-  textColorClass: string;
-}
-
-export interface MuscleHeatmapResponse {
-  period: string;
-  muscles: MuscleHeatmapItem[];
-  totalWorkouts: number;
-  totalSets: number;
-  totalVolumeKg: number;
-}
 
 // ----------------------------------------------------
 // CONTEST EVALUATION SUITE (SIMULADOS, ERROS & SRS)

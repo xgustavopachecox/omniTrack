@@ -527,8 +527,7 @@ export default function NutritionPage() {
         {groupedCascade.length === 0 ? (
           <div className="glass-card p-10 rounded-2xl text-center text-slate-500 space-y-2">
             <Apple className="h-10 w-10 mx-auto text-slate-600 opacity-50" />
-            <p className="text-sm font-medium">Nenhuma refeição registrada no histórico.</p>
-            <p className="text-xs">Use a gravação de voz ou o botão "+ Refeição Manual" para começar.</p>
+            <p className="text-sm font-medium">Nenhuma refeição registrada hoje. Adicione uma refeição acima ou utilize o assistente de IA.</p>
           </div>
         ) : (
           <div className="space-y-6">
