@@ -14,6 +14,10 @@ import {
   TafBenchmark,
   PhysiqueAssessment,
   GeminiParseEditalResponse,
+  MockExam,
+  MockExamQuestion,
+  ErrorNotebookItem,
+  ScheduledReview,
 } from './types';
 import { supabase, isSupabaseConfigured } from './supabase/client';
 
@@ -506,6 +510,25 @@ export class OmniStore {
     return updated;
   }
 
+  static async addXp(amount: number, reason?: string): Promise<Profile> {
+    const current = await this.getProfile();
+    const newXp = (current.current_xp || 0) + amount;
+    const xpPerLevel = 500;
+    const newLevel = Math.floor(newXp / xpPerLevel) + 1;
+    let rank = current.rank_title || 'Aspirante / Recruta';
+
+    if (newLevel >= 10) rank = 'Mestre da Disciplina';
+    else if (newLevel >= 7) rank = 'Comandante de Elite';
+    else if (newLevel >= 4) rank = 'Guerreiro Avançado';
+    else if (newLevel >= 2) rank = 'Combatente Disciplinado';
+
+    return this.updateProfile({
+      current_xp: newXp,
+      current_level: newLevel,
+      rank_title: rank,
+    });
+  }
+
   // Nutrition
   static async getNutritionLogs(): Promise<NutritionLog[]> {
     if (isSupabaseConfigured && supabase) {
@@ -896,12 +919,17 @@ export class OmniStore {
     return this.get('water_logs', defaultWaterLogs);
   }
 
-  static async addWaterLog(amount_ml: number): Promise<WaterLog> {
+  static async addWaterLog(amount_ml: number, targetDate?: string): Promise<WaterLog> {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const logged_at = targetDate && targetDate !== todayStr
+      ? `${targetDate}T12:00:00.000Z`
+      : new Date().toISOString();
+
     const newLog: WaterLog = {
       id: `wt_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
       user_id: DEMO_USER_ID,
       amount_ml,
-      logged_at: new Date().toISOString(),
+      logged_at,
     };
 
     if (isSupabaseConfigured && supabase) {
@@ -913,6 +941,60 @@ export class OmniStore {
     const updated = [newLog, ...current];
     this.set('water_logs', updated);
     return newLog;
+  }
+
+  static async subtractWaterLog(amount_ml: number, targetDate?: string): Promise<boolean> {
+    const dateStr = targetDate || new Date().toISOString().split('T')[0];
+    const current = await this.getWaterLogs();
+
+    // Filter logs for targetDate, sorted by logged_at descending (newest first)
+    const dateLogs = current
+      .filter((w) => w.logged_at.split('T')[0] === dateStr)
+      .sort((a, b) => new Date(b.logged_at).getTime() - new Date(a.logged_at).getTime());
+
+    const currentTotal = dateLogs.reduce((acc, curr) => acc + curr.amount_ml, 0);
+    if (currentTotal <= 0) {
+      return false; // Total is already 0 ml, cannot subtract
+    }
+
+    let remainingToSubtract = Math.min(amount_ml, currentTotal);
+    const logsToDelete: string[] = [];
+    const logsToUpdate: { id: string; amount_ml: number }[] = [];
+
+    for (const log of dateLogs) {
+      if (remainingToSubtract <= 0) break;
+
+      if (log.amount_ml <= remainingToSubtract) {
+        remainingToSubtract -= log.amount_ml;
+        logsToDelete.push(log.id);
+      } else {
+        const newAmount = log.amount_ml - remainingToSubtract;
+        remainingToSubtract = 0;
+        logsToUpdate.push({ id: log.id, amount_ml: newAmount });
+      }
+    }
+
+    if (isSupabaseConfigured && supabase) {
+      if (logsToDelete.length > 0) {
+        await supabase.from('water_logs').delete().in('id', logsToDelete);
+      }
+      for (const updateItem of logsToUpdate) {
+        await supabase
+          .from('water_logs')
+          .update({ amount_ml: updateItem.amount_ml })
+          .eq('id', updateItem.id);
+      }
+    }
+
+    const updated = current
+      .filter((w) => !logsToDelete.includes(w.id))
+      .map((w) => {
+        const u = logsToUpdate.find((item) => item.id === w.id);
+        return u ? { ...w, amount_ml: u.amount_ml } : w;
+      });
+
+    this.set('water_logs', updated);
+    return true;
   }
 
   static async resetTodayWater(): Promise<void> {
@@ -1072,6 +1154,21 @@ export class OmniStore {
     const updated = [...current, newSubject];
     this.set('contest_subjects', updated);
     return newSubject;
+  }
+
+  static async updateContestSubject(id: string, updates: Partial<ContestSubject>): Promise<ContestSubject> {
+    const current = await this.getContestSubjects();
+    const existing = current.find((s) => s.id === id);
+    if (!existing) throw new Error('Contest subject not found');
+
+    const updated: ContestSubject = { ...existing, ...updates };
+    if (isSupabaseConfigured && supabase) {
+      await supabase.from('contest_subjects').update(updates).eq('id', id);
+    }
+
+    const updatedList = current.map((s) => (s.id === id ? updated : s));
+    this.set('contest_subjects', updatedList);
+    return updated;
   }
 
   static async toggleContestSubject(id: string): Promise<void> {
@@ -1337,5 +1434,521 @@ export class OmniStore {
     const updated = current.filter((pa) => pa.id !== id);
     this.set('physique_assessments', updated);
   }
+
+  // ----------------------------------------------------
+  // SIMULADOS, CADERNO DE ERROS & REVISÃO ESPAÇADA (SRS)
+  // ----------------------------------------------------
+
+  // 1. Motor de Simulados
+  static async getMockExams(contestId?: string): Promise<MockExam[]> {
+    if (isSupabaseConfigured && supabase) {
+      let query = supabase.from('mock_exams').select('*, questions:mock_exam_questions(*)').order('created_at', { ascending: false });
+      if (contestId) query = query.eq('contest_id', contestId);
+      const { data } = await query;
+      if (data && data.length > 0) return data as MockExam[];
+    }
+
+    const all = this.get('mock_exams', defaultMockExams);
+    if (contestId) {
+      return all.filter((m) => m.contest_id === contestId);
+    }
+    return all;
+  }
+
+  static async getMockExamById(id: string): Promise<MockExam | null> {
+    const all = await this.getMockExams();
+    return all.find((m) => m.id === id) || null;
+  }
+
+  static async createMockExam(
+    examInput: Omit<MockExam, 'id' | 'user_id' | 'created_at' | 'status' | 'score_achieved' | 'percentage_score' | 'duration_taken_seconds'>,
+    questionsInput: Omit<MockExamQuestion, 'id' | 'exam_id'>[]
+  ): Promise<MockExam> {
+    const nowIso = new Date().toISOString();
+    const examId = `me_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+
+    const questions: MockExamQuestion[] = questionsInput.map((q, idx) => ({
+      ...q,
+      id: `q_${Date.now()}_${idx}_${Math.random().toString(36).substr(2, 4)}`,
+      exam_id: examId,
+    }));
+
+    const newExam: MockExam = {
+      ...examInput,
+      id: examId,
+      user_id: DEMO_USER_ID,
+      duration_taken_seconds: 0,
+      score_achieved: 0,
+      percentage_score: 0,
+      status: 'in_progress',
+      created_at: nowIso,
+      questions,
+    };
+
+    if (isSupabaseConfigured && supabase) {
+      const { data: insertedExam } = await supabase.from('mock_exams').insert({
+        id: newExam.id,
+        user_id: newExam.user_id,
+        contest_id: newExam.contest_id,
+        title: newExam.title,
+        scoring_system: newExam.scoring_system,
+        total_questions: questions.length,
+        time_limit_minutes: newExam.time_limit_minutes,
+        status: 'in_progress',
+      }).select().single();
+
+      if (insertedExam) {
+        await supabase.from('mock_exam_questions').insert(questions);
+      }
+    }
+
+    const current = await this.getMockExams();
+    const updated = [newExam, ...current];
+    this.set('mock_exams', updated);
+    return newExam;
+  }
+
+  static async finishMockExam(
+    examId: string,
+    userAnswers: Record<string, string>,
+    durationTakenSeconds: number,
+    contestId: string
+  ): Promise<MockExam> {
+    const exam = await this.getMockExamById(examId);
+    if (!exam) throw new Error('Simulado não encontrado');
+
+    const questions = exam.questions || [];
+    let score = 0;
+    let correctCount = 0;
+
+    const evaluatedQuestions = questions.map((q) => {
+      const ans = userAnswers[q.id] || '';
+      const isCorrect = ans.trim().toUpperCase() === q.correct_answer.trim().toUpperCase();
+
+      if (ans) {
+        if (isCorrect) {
+          correctCount++;
+          score += 1;
+        } else {
+          if (exam.scoring_system === 'cebraspe_penalty') {
+            score -= 1; // Cebraspe rule: wrong answer deducts 1 point
+          }
+        }
+      }
+
+      return {
+        ...q,
+        user_answer: ans,
+        is_correct: isCorrect,
+      };
+    });
+
+    const totalQuestions = questions.length || 1;
+    const percentage = Math.max(0, Math.round((score / totalQuestions) * 100));
+
+    const updatedExam: MockExam = {
+      ...exam,
+      duration_taken_seconds: durationTakenSeconds,
+      score_achieved: score,
+      percentage_score: percentage,
+      status: 'completed',
+      questions: evaluatedQuestions,
+    };
+
+    if (isSupabaseConfigured && supabase) {
+      await supabase.from('mock_exams').update({
+        duration_taken_seconds: durationTakenSeconds,
+        score_achieved: score,
+        percentage_score: percentage,
+        status: 'completed',
+      }).eq('id', examId);
+
+      for (const eq of evaluatedQuestions) {
+        await supabase.from('mock_exam_questions').update({
+          user_answer: eq.user_answer,
+          is_correct: eq.is_correct,
+        }).eq('id', eq.id);
+      }
+    }
+
+    // Automatically add incorrect questions to Caderno de Erros
+    for (const eq of evaluatedQuestions) {
+      if (eq.user_answer && !eq.is_correct) {
+        await this.addOrUpdateErrorNotebook({
+          contest_id: contestId,
+          question_id: eq.id,
+          subject_name: eq.subject_name,
+          topic_name: eq.topic_name,
+          error_reason: 'Não sabia o conteúdo',
+          ai_clarification: eq.explanation || `O gabarito correto é "${eq.correct_answer}". Sua resposta foi "${eq.user_answer}".`,
+          is_mastered: false,
+          question: eq,
+        });
+      }
+    }
+
+    const currentExams = await this.getMockExams();
+    const updatedExamsList = currentExams.map((m) => (m.id === examId ? updatedExam : m));
+    this.set('mock_exams', updatedExamsList);
+
+    return updatedExam;
+  }
+
+  static async deleteMockExam(id: string): Promise<void> {
+    if (isSupabaseConfigured && supabase) {
+      await supabase.from('mock_exams').delete().eq('id', id);
+    }
+    const current = await this.getMockExams();
+    const updated = current.filter((m) => m.id !== id);
+    this.set('mock_exams', updated);
+  }
+
+  // 2. Caderno de Erros Inteligente
+  static async getErrorNotebook(contestId?: string): Promise<ErrorNotebookItem[]> {
+    if (isSupabaseConfigured && supabase) {
+      let query = supabase.from('error_notebook').select('*, question:mock_exam_questions(*)').order('created_at', { ascending: false });
+      if (contestId) query = query.eq('contest_id', contestId);
+      const { data } = await query;
+      if (data && data.length > 0) return data as ErrorNotebookItem[];
+    }
+
+    const all = this.get('error_notebook', defaultErrorNotebook);
+    if (contestId) {
+      return all.filter((e) => e.contest_id === contestId);
+    }
+    return all;
+  }
+
+  static async addOrUpdateErrorNotebook(
+    itemInput: Omit<ErrorNotebookItem, 'id' | 'user_id' | 'created_at'>
+  ): Promise<ErrorNotebookItem> {
+    const current = await this.getErrorNotebook();
+    const existing = itemInput.question_id
+      ? current.find((e) => e.question_id === itemInput.question_id)
+      : null;
+
+    if (existing) {
+      const updatedItem: ErrorNotebookItem = {
+        ...existing,
+        ...itemInput,
+      };
+      if (isSupabaseConfigured && supabase) {
+        await supabase.from('error_notebook').update(updatedItem).eq('id', existing.id);
+      }
+      const updatedList = current.map((e) => (e.id === existing.id ? updatedItem : e));
+      this.set('error_notebook', updatedList);
+      return updatedItem;
+    } else {
+      const nowIso = new Date().toISOString();
+      const newItem: ErrorNotebookItem = {
+        ...itemInput,
+        id: `en_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+        user_id: DEMO_USER_ID,
+        created_at: nowIso,
+      };
+      if (isSupabaseConfigured && supabase) {
+        await supabase.from('error_notebook').insert(newItem);
+      }
+      const updatedList = [newItem, ...current];
+      this.set('error_notebook', updatedList);
+      return newItem;
+    }
+  }
+
+  static async updateErrorReason(errorId: string, errorReason: string): Promise<ErrorNotebookItem> {
+    const current = await this.getErrorNotebook();
+    const item = current.find((e) => e.id === errorId);
+    if (!item) throw new Error('Item do Caderno de Erros não encontrado');
+
+    const updated = { ...item, error_reason: errorReason };
+    if (isSupabaseConfigured && supabase) {
+      await supabase.from('error_notebook').update({ error_reason: errorReason }).eq('id', errorId);
+    }
+
+    const updatedList = current.map((e) => (e.id === errorId ? updated : e));
+    this.set('error_notebook', updatedList);
+    return updated;
+  }
+
+  static async updateErrorClarification(errorId: string, aiClarification: string): Promise<ErrorNotebookItem> {
+    const current = await this.getErrorNotebook();
+    const item = current.find((e) => e.id === errorId);
+    if (!item) throw new Error('Item do Caderno de Erros não encontrado');
+
+    const updated = { ...item, ai_clarification: aiClarification };
+    if (isSupabaseConfigured && supabase) {
+      await supabase.from('error_notebook').update({ ai_clarification: aiClarification }).eq('id', errorId);
+    }
+
+    const updatedList = current.map((e) => (e.id === errorId ? updated : e));
+    this.set('error_notebook', updatedList);
+    return updated;
+  }
+
+  static async markErrorAsMastered(errorId: string, isMastered: boolean): Promise<ErrorNotebookItem> {
+    const current = await this.getErrorNotebook();
+    const item = current.find((e) => e.id === errorId);
+    if (!item) throw new Error('Item do Caderno de Erros não encontrado');
+
+    const updated = { ...item, is_mastered: isMastered };
+    if (isSupabaseConfigured && supabase) {
+      await supabase.from('error_notebook').update({ is_mastered: isMastered }).eq('id', errorId);
+    }
+
+    const updatedList = current.map((e) => (e.id === errorId ? updated : e));
+    this.set('error_notebook', updatedList);
+    return updated;
+  }
+
+  static async deleteErrorNotebookItem(id: string): Promise<void> {
+    if (isSupabaseConfigured && supabase) {
+      await supabase.from('error_notebook').delete().eq('id', id);
+    }
+    const current = await this.getErrorNotebook();
+    const updated = current.filter((e) => e.id !== id);
+    this.set('error_notebook', updated);
+  }
+
+  // 3. Sistema de Revisão Espaçada (Curva de Esquecimento / SRS)
+  static async getScheduledReviews(contestId?: string): Promise<ScheduledReview[]> {
+    if (isSupabaseConfigured && supabase) {
+      const { data } = await supabase.from('scheduled_reviews').select('*, subject:contest_subjects(*)').order('scheduled_for', { ascending: true });
+      if (data && data.length > 0) return data as ScheduledReview[];
+    }
+
+    const all = this.get('scheduled_reviews', defaultScheduledReviews);
+    if (contestId) {
+      const subjects = await this.getContestSubjects(contestId);
+      const subjectIds = new Set(subjects.map((s) => s.id));
+      return all.filter((r) => subjectIds.has(r.subject_id));
+    }
+    return all;
+  }
+
+  static async createScheduledReview(
+    subjectId: string,
+    reviewStage: number = 1,
+    scheduledFor?: string,
+    subjectName?: string,
+    topicName?: string
+  ): Promise<ScheduledReview> {
+    const nowIso = new Date().toISOString();
+    let targetDateStr = scheduledFor;
+
+    if (!targetDateStr) {
+      const daysToAdd = reviewStage === 1 ? 1 : reviewStage === 2 ? 7 : 30;
+      targetDateStr = new Date(Date.now() + daysToAdd * 86400 * 1000).toISOString().split('T')[0];
+    }
+
+    const newReview: ScheduledReview = {
+      id: `sr_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      user_id: DEMO_USER_ID,
+      subject_id: subjectId,
+      subject_name: subjectName,
+      topic_name: topicName,
+      review_stage: reviewStage,
+      scheduled_for: targetDateStr,
+      is_completed: false,
+      created_at: nowIso,
+    };
+
+    if (isSupabaseConfigured && supabase) {
+      await supabase.from('scheduled_reviews').insert({
+        id: newReview.id,
+        user_id: newReview.user_id,
+        subject_id: newReview.subject_id,
+        review_stage: newReview.review_stage,
+        scheduled_for: newReview.scheduled_for,
+        is_completed: false,
+      });
+    }
+
+    const current = await this.getScheduledReviews();
+    const updated = [...current, newReview];
+    this.set('scheduled_reviews', updated);
+    return newReview;
+  }
+
+  static async completeScheduledReview(reviewId: string): Promise<ScheduledReview> {
+    const current = await this.getScheduledReviews();
+    const existing = current.find((r) => r.id === reviewId);
+    if (!existing) throw new Error('Revisão agendada não encontrada');
+
+    // Advance Stage or Complete
+    const currentStage = existing.review_stage;
+    let nextStage = currentStage + 1;
+    let isFullyCompleted = false;
+
+    if (currentStage >= 3) {
+      isFullyCompleted = true;
+      nextStage = 3;
+    }
+
+    const daysToAdd = nextStage === 2 ? 7 : 30;
+    const nextScheduledFor = new Date(Date.now() + daysToAdd * 86400 * 1000).toISOString().split('T')[0];
+
+    const updated: ScheduledReview = {
+      ...existing,
+      review_stage: isFullyCompleted ? 3 : nextStage,
+      scheduled_for: isFullyCompleted ? existing.scheduled_for : nextScheduledFor,
+      is_completed: isFullyCompleted,
+    };
+
+    if (isSupabaseConfigured && supabase) {
+      await supabase.from('scheduled_reviews').update({
+        review_stage: updated.review_stage,
+        scheduled_for: updated.scheduled_for,
+        is_completed: updated.is_completed,
+      }).eq('id', reviewId);
+    }
+
+    // Also increment reviews_count on contest_subjects
+    if (existing.subject_id) {
+      await this.incrementSubjectReviewCount(existing.subject_id);
+    }
+
+    const updatedList = current.map((r) => (r.id === reviewId ? updated : r));
+    this.set('scheduled_reviews', updatedList);
+    return updated;
+  }
+
+  static async incrementSubjectReviewCount(subjectId: string): Promise<void> {
+    const allSubjects = await this.getContestSubjects();
+    const subj = allSubjects.find((s) => s.id === subjectId);
+    if (subj) {
+      const updatedCount = (subj.reviews_count || 0) + 1;
+      if (isSupabaseConfigured && supabase) {
+        await supabase.from('contest_subjects').update({ reviews_count: updatedCount }).eq('id', subjectId);
+      }
+      const updatedSubjects = allSubjects.map((s) => (s.id === subjectId ? { ...s, reviews_count: updatedCount } : s));
+      this.set('contest_subjects', updatedSubjects);
+    }
+  }
 }
+
+const defaultMockExams: MockExam[] = [
+  {
+    id: 'me1',
+    user_id: DEMO_USER_ID,
+    contest_id: 'c1',
+    title: 'Simulado 01 - Foco Cebraspe Agente PF (Direito & TI)',
+    scoring_system: 'cebraspe_penalty',
+    total_questions: 5,
+    time_limit_minutes: 60,
+    duration_taken_seconds: 1450,
+    score_achieved: 3,
+    percentage_score: 80,
+    status: 'completed',
+    created_at: new Date(Date.now() - 3 * 86400 * 1000).toISOString(),
+    questions: [
+      {
+        id: 'q1',
+        exam_id: 'me1',
+        subject_name: 'Direito Constitucional',
+        topic_name: 'Direitos e Garantias Fundamentais (Art. 5º)',
+        question_statement: 'A casa é asilo inviolável do indivíduo, ninguém nela podendo penetrar sem consentimento do morador, salvo em caso de flagrante delito ou desastre, ou para prestar socorro, ou, durante a noite, por determinação judicial.',
+        question_type: 'true_false',
+        options: [{ key: 'CERTO', text: 'Certo' }, { key: 'ERRADO', text: 'Errado' }],
+        correct_answer: 'ERRADO',
+        user_answer: 'CERTO',
+        is_correct: false,
+        explanation: 'Gabarito ERRADO. Por determinação judicial a entrada na casa SÓ pode ocorrer DURANTE O DIA (art. 5º, XI da CF/88).',
+      },
+      {
+        id: 'q2',
+        exam_id: 'me1',
+        subject_name: 'Direito Administrativo',
+        topic_name: 'Atos Administrativos: conceitos e atributos',
+        question_statement: 'O ato administrativo eivado de vício de legalidade pode ser anulado pela própria Administração Pública, em decorrência do princípio da autotutela.',
+        question_type: 'true_false',
+        options: [{ key: 'CERTO', text: 'Certo' }, { key: 'ERRADO', text: 'Errado' }],
+        correct_answer: 'CERTO',
+        user_answer: 'CERTO',
+        is_correct: true,
+        explanation: 'Gabarito CERTO. Conforme Súmulas 346 e 473 do STF.',
+      },
+      {
+        id: 'q3',
+        exam_id: 'me1',
+        subject_name: 'Informática & TI',
+        topic_name: 'Redes de Computadores & Segurança',
+        question_statement: 'O protocolo HTTPS utiliza criptografia assimétrica apenas no estabelecimento da conexão (handshake SSL/TLS) e criptografia simétrica para a transferência dos dados da sessão.',
+        question_type: 'true_false',
+        options: [{ key: 'CERTO', text: 'Certo' }, { key: 'ERRADO', text: 'Errado' }],
+        correct_answer: 'CERTO',
+        user_answer: 'CERTO',
+        is_correct: true,
+        explanation: 'Gabarito CERTO. O SSL/TLS usa criptografia híbrida: assimétrica no handshake para negociar chaves e simétrica na transferência dos dados.',
+      },
+      {
+        id: 'q4',
+        exam_id: 'me1',
+        subject_name: 'Língua Portuguesa',
+        topic_name: 'Sintaxe da oração e do período',
+        question_statement: 'Em "Atendeu às solicitações dos clientes", o emprego do sinal indicativo de crase é obrigatório dada a regência do verbo atender.',
+        question_type: 'true_false',
+        options: [{ key: 'CERTO', text: 'Certo' }, { key: 'ERRADO', text: 'Errado' }],
+        correct_answer: 'CERTO',
+        user_answer: 'CERTO',
+        is_correct: true,
+        explanation: 'Gabarito CERTO. Atender exige a preposição "a" antes de substantivos femininos plurais.',
+      },
+      {
+        id: 'q5',
+        exam_id: 'me1',
+        subject_name: 'Direito Administrativo',
+        topic_name: 'Licitações e Contratos (Lei 14.133/21)',
+        question_statement: 'A modalidade pregão é obrigatória para a aquisição de bens e serviços comuns, cujo critério de julgamento poderá ser o de menor preço ou o de maior desconto.',
+        question_type: 'true_false',
+        options: [{ key: 'CERTO', text: 'Certo' }, { key: 'ERRADO', text: 'Errado' }],
+        correct_answer: 'CERTO',
+        user_answer: 'CERTO',
+        is_correct: true,
+        explanation: 'Gabarito CERTO. Art. 6º, XL1 e art. 29 da Lei nº 14.133/2021.',
+      },
+    ],
+  },
+];
+
+const defaultErrorNotebook: ErrorNotebookItem[] = [
+  {
+    id: 'en1',
+    user_id: DEMO_USER_ID,
+    contest_id: 'c1',
+    question_id: 'q1',
+    subject_name: 'Direito Constitucional',
+    topic_name: 'Direitos e Garantias Fundamentais (Art. 5º)',
+    error_reason: 'Pegadinha da Banca',
+    ai_clarification: 'Atenção ao detalhe temporal! A regra do Art. 5º, XI da CF/88 autoriza ingresso por ORDEM JUDICIAL exclusivamente durante o DIA. À noite, o ingresso domiciliar só é permitido em caso de flagrante delito, desastre ou para prestar socorro.',
+    is_mastered: false,
+    created_at: new Date(Date.now() - 3 * 86400 * 1000).toISOString(),
+    question: defaultMockExams[0].questions![0],
+  },
+];
+
+const defaultScheduledReviews: ScheduledReview[] = [
+  {
+    id: 'sr1',
+    user_id: DEMO_USER_ID,
+    subject_id: 'cs4',
+    subject_name: 'Direito Constitucional',
+    topic_name: 'Direitos e Garantias Fundamentais (Art. 5º)',
+    review_stage: 1,
+    scheduled_for: new Date().toISOString().split('T')[0],
+    is_completed: false,
+    created_at: new Date(Date.now() - 1 * 86400 * 1000).toISOString(),
+  },
+  {
+    id: 'sr2',
+    user_id: DEMO_USER_ID,
+    subject_id: 'cs6',
+    subject_name: 'Direito Administrativo',
+    topic_name: 'Atos Administrativos: conceitos e atributos',
+    review_stage: 2,
+    scheduled_for: new Date(Date.now() + 2 * 86400 * 1000).toISOString().split('T')[0],
+    is_completed: false,
+    created_at: new Date(Date.now() - 5 * 86400 * 1000).toISOString(),
+  },
+];
+
 

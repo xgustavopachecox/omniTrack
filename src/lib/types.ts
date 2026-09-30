@@ -5,6 +5,7 @@ export interface Profile {
   daily_carbs_target: number;
   daily_fats_target: number;
   daily_water_target: number;
+  weekly_workout_target?: number; // Target workouts per week (default 4)
   current_level?: number;
   current_xp?: number;
   rank_title?: string;
@@ -295,4 +296,113 @@ export interface GeminiPhysiqueAssessmentResponse {
   detailed_critique: string;
   training_adjustments: string;
 }
+
+export type HeatmapIntensityLevel = 'low' | 'moderate' | 'high' | 'very_high';
+
+export interface MuscleHeatmapItem {
+  muscle: string; // Peito, Costas, Quadríceps, Isquiotibiais, Ombros, Tríceps, Bíceps, Abdômen, Panturrilhas
+  totalSets: number;
+  totalVolumeKg: number;
+  exerciseCount: number;
+  level: HeatmapIntensityLevel;
+  label: string;
+  colorHex: string;
+  bgColorClass: string;
+  borderColorClass: string;
+  textColorClass: string;
+}
+
+export interface MuscleHeatmapResponse {
+  period: string;
+  muscles: MuscleHeatmapItem[];
+  totalWorkouts: number;
+  totalSets: number;
+  totalVolumeKg: number;
+}
+
+// ----------------------------------------------------
+// CONTEST EVALUATION SUITE (SIMULADOS, ERROS & SRS)
+// ----------------------------------------------------
+
+export interface MockExamOption {
+  key: string; // "A", "B", "C", "D", "E" or "CERTO", "ERRADO"
+  text: string;
+}
+
+export interface MockExamQuestion {
+  id: string;
+  exam_id: string;
+  subject_name: string;
+  topic_name?: string;
+  question_statement: string;
+  question_type: 'multiple_choice' | 'true_false';
+  options?: MockExamOption[];
+  correct_answer: string; // "A", "B", "C", "D", "E" or "CERTO", "ERRADO"
+  user_answer?: string;
+  is_correct?: boolean;
+  explanation?: string;
+}
+
+export interface MockExam {
+  id: string;
+  user_id?: string;
+  contest_id: string;
+  title: string;
+  scoring_system: 'standard' | 'cebraspe_penalty';
+  total_questions: number;
+  time_limit_minutes: number;
+  duration_taken_seconds: number;
+  score_achieved: number;
+  percentage_score: number;
+  status: 'in_progress' | 'completed';
+  created_at?: string;
+  questions?: MockExamQuestion[];
+}
+
+export interface ErrorNotebookItem {
+  id: string;
+  user_id?: string;
+  contest_id: string;
+  question_id?: string;
+  subject_name: string;
+  topic_name?: string;
+  error_reason?: string; // Ex: 'Falta de Atenção', 'Não sabia a Lei Seca', 'Pegadinha da Banca'
+  ai_clarification?: string;
+  is_mastered: boolean;
+  created_at?: string;
+  question?: MockExamQuestion;
+}
+
+export interface ScheduledReview {
+  id: string;
+  user_id?: string;
+  subject_id: string;
+  subject_name?: string;
+  topic_name?: string;
+  review_stage: number; // 1: 24h (D+1), 2: 7 dias (D+7), 3: 30 dias (D+30)
+  scheduled_for: string; // YYYY-MM-DD
+  is_completed: boolean;
+  created_at?: string;
+}
+
+export interface GeminiMockExamResponse {
+  title: string;
+  scoring_system: 'standard' | 'cebraspe_penalty';
+  questions: {
+    subject_name: string;
+    topic_name: string;
+    question_statement: string;
+    question_type: 'multiple_choice' | 'true_false';
+    options?: { key: string; text: string }[];
+    correct_answer: string;
+    explanation: string;
+  }[];
+}
+
+export interface GeminiErrorClarificationResponse {
+  ai_clarification: string;
+  suggested_error_reason?: string;
+  key_legal_point?: string;
+}
+
 

@@ -10,6 +10,9 @@ import {
   GeminiWorkoutSessionResponse,
 } from '@/lib/types';
 import { VoiceTextInput } from '@/components/ui/VoiceTextInput';
+import { BodyHeatmap } from '@/components/ui/BodyHeatmap';
+import { calculateWeeklyStreak } from '@/lib/consistency';
+import { computeMuscleHeatmap } from '@/lib/heatmap';
 import {
   Dumbbell,
   Sparkles,
@@ -29,6 +32,8 @@ import {
   MoreVertical,
   SlidersHorizontal,
   Flame,
+  Zap,
+  Activity,
 } from 'lucide-react';
 
 const muscleGroups = ['Todos', 'Peito', 'Costas', 'Pernas', 'Ombros', 'Braços'];
@@ -425,6 +430,14 @@ export default function WorkoutPage() {
     return 'bg-slate-800 text-slate-300 border-slate-700';
   };
 
+  const weeklyStreakData = useMemo(() => {
+    return calculateWeeklyStreak(sessions, 4);
+  }, [sessions]);
+
+  const heatmapData = useMemo(() => {
+    return computeMuscleHeatmap(sessions, 7);
+  }, [sessions]);
+
   return (
     <div className="space-y-8 animate-fadeIn max-w-5xl mx-auto">
       {/* Header Banner */}
@@ -446,30 +459,47 @@ export default function WorkoutPage() {
           </p>
         </div>
 
-        {/* Tab Switcher Buttons */}
-        <div className="flex items-center p-1 bg-slate-950/80 rounded-xl border border-slate-800">
-          <button
-            onClick={() => setActiveTab('sessions')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 ${
-              activeTab === 'sessions'
-                ? 'bg-gradient-to-r from-cyan-500 to-emerald-500 text-slate-950 shadow-md'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <Layers className="h-4 w-4" />
-            Sessões ({sessions.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('prs')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 ${
-              activeTab === 'prs'
-                ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 shadow-md'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <Trophy className="h-4 w-4" />
-            Vitrine de PRs ({prs.length})
-          </button>
+        <div className="flex flex-col sm:flex-row items-center gap-3">
+          {/* Weekly Streak Badge */}
+          <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-2xl bg-slate-950/90 border border-amber-500/40 shadow-lg shadow-amber-500/10">
+            <div className="p-1.5 rounded-xl bg-amber-500/20 text-amber-400">
+              <Zap className="h-4 w-4 fill-amber-400 animate-pulse" />
+            </div>
+            <div className="text-left">
+              <span className="text-xs font-black text-white block tracking-tight">
+                ⚡ {weeklyStreakData.currentStreak} Semanas Seguidas
+              </span>
+              <span className="text-[10px] text-amber-400 font-bold block">
+                {weeklyStreakData.currentWeekWorkouts}/{weeklyStreakData.targetWorkoutsPerWeek} treinos na semana {weeklyStreakData.isCurrentWeekGoalMet ? '✓ Goal!' : ''}
+              </span>
+            </div>
+          </div>
+
+          {/* Tab Switcher Buttons */}
+          <div className="flex items-center p-1 bg-slate-950/80 rounded-xl border border-slate-800">
+            <button
+              onClick={() => setActiveTab('sessions')}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 ${
+                activeTab === 'sessions'
+                  ? 'bg-gradient-to-r from-cyan-500 to-emerald-500 text-slate-950 shadow-md'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Layers className="h-4 w-4" />
+              Sessões ({sessions.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('prs')}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 ${
+                activeTab === 'prs'
+                  ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 shadow-md'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Trophy className="h-4 w-4" />
+              Vitrine de PRs ({prs.length})
+            </button>
+          </div>
         </div>
       </div>
 
@@ -512,6 +542,9 @@ export default function WorkoutPage() {
               isLoading={isLoading}
             />
           </div>
+
+          {/* MAPA DE CALOR MUSCULAR POR VOLUME SEMANAL (BODY HEATMAP) */}
+          <BodyHeatmap data={heatmapData} />
 
           {/* Timeline: Weekly Blocks */}
           <div className="space-y-8">

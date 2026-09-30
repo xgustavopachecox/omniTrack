@@ -173,6 +173,75 @@ CREATE TABLE IF NOT EXISTS contest_taf_requirements (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- 10.5 Simulados (Provas)
+CREATE TABLE IF NOT EXISTS mock_exams (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
+    contest_id UUID REFERENCES contests(id) ON DELETE CASCADE NOT NULL,
+    title TEXT NOT NULL, -- Ex: "Simulado 01 - Foco Cebraspe Agente PF"
+    scoring_system TEXT DEFAULT 'standard' CHECK (scoring_system IN ('standard', 'cebraspe_penalty')), -- 'cebraspe_penalty' desconta 1 ponto por erro
+    total_questions INT NOT NULL,
+    time_limit_minutes INT DEFAULT 240, -- Tempo limite de prova
+    duration_taken_seconds INT DEFAULT 0,
+    score_achieved NUMERIC(6,2) DEFAULT 0,
+    percentage_score NUMERIC(5,2) DEFAULT 0,
+    status TEXT DEFAULT 'in_progress' CHECK (status IN ('in_progress', 'completed')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 10.6 Questões do Simulado
+CREATE TABLE IF NOT EXISTS mock_exam_questions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    exam_id UUID REFERENCES mock_exams(id) ON DELETE CASCADE NOT NULL,
+    subject_name TEXT NOT NULL,
+    topic_name TEXT,
+    question_statement TEXT NOT NULL,
+    question_type TEXT DEFAULT 'multiple_choice' CHECK (question_type IN ('multiple_choice', 'true_false')),
+    options JSONB, -- Ex: [{"key": "A", "text": "Opção A"}, ...] ou nulo para Certo/Errado
+    correct_answer TEXT NOT NULL, -- "A", "B", "C", "D", "E" ou "CERTO", "ERRADO"
+    user_answer TEXT,
+    is_correct BOOLEAN,
+    explanation TEXT -- Justificativa da banca / fundamentação da lei
+);
+
+-- 10.7 Caderno de Erros Inteligente
+CREATE TABLE IF NOT EXISTS error_notebook (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
+    contest_id UUID REFERENCES contests(id) ON DELETE CASCADE NOT NULL,
+    question_id UUID REFERENCES mock_exam_questions(id) ON DELETE CASCADE,
+    subject_name TEXT NOT NULL,
+    topic_name TEXT,
+    error_reason TEXT, -- Ex: 'Falta de Atenção', 'Não sabia a Lei Seca', 'Pegadinha da Banca'
+    ai_clarification TEXT, -- Explicação mastigada do Gemini sobre por que o usuário errou
+    is_mastered BOOLEAN DEFAULT FALSE, -- Marcado quando o usuário acerta na revisão
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 10.8 Sistema de Revisão Espaçada (Curva de Esquecimento / SRS)
+CREATE TABLE IF NOT EXISTS scheduled_reviews (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
+    subject_id UUID REFERENCES contest_subjects(id) ON DELETE CASCADE NOT NULL,
+    review_stage INT DEFAULT 1, -- 1: 24h (D+1), 2: 7 dias (D+7), 3: 30 dias (D+30)
+    scheduled_for DATE NOT NULL,
+    is_completed BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- ==============================================================================
+-- ÍNDICES DE ALTA VELOCIDADE (PERFORMANCE & ZERO LATÊNCIA)
+-- ==============================================================================
+
+CREATE INDEX IF NOT EXISTS idx_nutrition_user_date ON nutrition_logs(user_id, log_date DESC);
+CREATE INDEX IF NOT EXISTS idx_water_user_date ON water_logs(user_id, logged_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workouts_user_date ON workout_sessions(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_contest_subjects_contest ON contest_subjects(contest_id);
+CREATE INDEX IF NOT EXISTS idx_study_sessions_user_contest ON study_sessions(user_id, contest_id);
+CREATE INDEX IF NOT EXISTS idx_mock_exams_user_contest ON mock_exams(user_id, contest_id);
+CREATE INDEX IF NOT EXISTS idx_error_notebook_user_contest ON error_notebook(user_id, contest_id);
+CREATE INDEX IF NOT EXISTS idx_scheduled_reviews_user_subject ON scheduled_reviews(user_id, subject_id);
+
 -- Habilitar RLS em todas as tabelas
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE nutrition_logs ENABLE ROW LEVEL SECURITY;
@@ -187,6 +256,10 @@ ALTER TABLE contests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE contest_subjects ENABLE ROW LEVEL SECURITY;
 ALTER TABLE study_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE contest_taf_requirements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mock_exams ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mock_exam_questions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE error_notebook ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scheduled_reviews ENABLE ROW LEVEL SECURITY;
 
 -- Políticas de RLS
 DO $$
@@ -231,6 +304,20 @@ BEGIN
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users manage own contest_taf_requirements') THEN
         CREATE POLICY "Users manage own contest_taf_requirements" ON contest_taf_requirements FOR ALL USING (auth.uid() = user_id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users manage mock_exams') THEN
+        CREATE POLICY "Users manage mock_exams" ON mock_exams FOR ALL USING (auth.uid() = user_id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users manage mock_exam_questions') THEN
+        CREATE POLICY "Users manage mock_exam_questions" ON mock_exam_questions FOR ALL USING (
+            exam_id IN (SELECT id FROM mock_exams WHERE user_id = auth.uid())
+        );
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users manage error_notebook') THEN
+        CREATE POLICY "Users manage error_notebook" ON error_notebook FOR ALL USING (auth.uid() = user_id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users manage scheduled_reviews') THEN
+        CREATE POLICY "Users manage scheduled_reviews" ON scheduled_reviews FOR ALL USING (auth.uid() = user_id);
     END IF;
 END $$;
 

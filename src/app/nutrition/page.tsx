@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { OmniStore } from '@/lib/store';
 import { NutritionLog, Profile, WaterLog, GeminiNutritionResponse } from '@/lib/types';
+import { calculateMacroPercentages } from '@/lib/consistency';
 import { VoiceTextInput } from '@/components/ui/VoiceTextInput';
 import {
   Utensils,
@@ -15,6 +16,7 @@ import {
   Edit2,
   CheckCircle2,
   Plus,
+  Minus,
   Droplets,
   ChevronDown,
   ChevronUp,
@@ -22,8 +24,13 @@ import {
   X,
   AlertCircle,
   TrendingUp,
+  TrendingDown,
+  ArrowUpRight,
+  ArrowDownRight,
   Award,
   Layers,
+  Scale,
+  Zap,
 } from 'lucide-react';
 
 const mealTypeOptions = ['Café da Manhã', 'Almoço', 'Lanche', 'Jantar', 'Ceia', 'Outro'];
@@ -103,12 +110,24 @@ export default function NutritionPage() {
     setTimeout(() => setStatusMessage(null), 4000);
   };
 
-  const handleAddWater = async (amount: number) => {
+  const handleAddWater = async (amount: number, dateStr?: string) => {
     setWaterAdding(true);
-    await OmniStore.addWaterLog(amount);
+    await OmniStore.addWaterLog(amount, dateStr);
     await loadData();
     setWaterAdding(false);
     showToast(`+${amount}ml de água registrados com sucesso!`);
+  };
+
+  const handleSubtractWater = async (amount: number, dateStr?: string) => {
+    setWaterAdding(true);
+    const success = await OmniStore.subtractWaterLog(amount, dateStr);
+    await loadData();
+    setWaterAdding(false);
+    if (success) {
+      showToast(`-${amount}ml de água descontados com sucesso!`);
+    } else {
+      showToast('O consumo de água não pode ficar negativo (mínimo = 0 ml).');
+    }
   };
 
   // AI Meal Processor
@@ -322,10 +341,32 @@ export default function NutritionPage() {
         const avgCarbs = Math.round(weekTotalCarbs / daysCount);
         const avgFats = Math.round(weekTotalFats / daysCount);
 
+        // Calculate Weekly Net Caloric Balance
+        const weeklyTargetCalories = targetCal * daysCount;
+        const weeklyBalance = weekTotalCalories - weeklyTargetCalories;
+        const weeklyBalanceFormatted =
+          weeklyBalance > 0
+            ? `+${weeklyBalance.toLocaleString('pt-BR')} kcal`
+            : `${weeklyBalance.toLocaleString('pt-BR')} kcal`;
+
+        let weeklyBalanceLabel = 'Manutenção Acumulada';
+        let weeklyEstimateStr = 'Balanço calórico em perfeito equilíbrio de manutenção';
+        if (weeklyBalance > 0) {
+          weeklyBalanceLabel = 'Superávit Acumulado';
+          const massGainKg = (weeklyBalance / 7700).toFixed(2);
+          weeklyEstimateStr = `Superávit favorável para ganho gradual de massa (~${massGainKg} kg)`;
+        } else if (weeklyBalance < 0) {
+          weeklyBalanceLabel = 'Défice Acumulado';
+          const fatBurnKg = (Math.abs(weeklyBalance) / 7700).toFixed(2);
+          weeklyEstimateStr = `Défice equivalente a aprox. ~${fatBurnKg} kg de queima`;
+        }
+
         // Count consistency days (calorie goal hit within +-15% range or > 85% target)
         const daysGoalMetCount = sortedDays.filter(
           (d) => d.totalCalories >= targetCal * 0.85 && d.totalCalories <= targetCal * 1.15
         ).length;
+
+        const weekMacros = calculateMacroPercentages(avgProtein, avgCarbs, avgFats);
 
         return {
           weekKey,
@@ -333,6 +374,11 @@ export default function NutritionPage() {
           days: sortedDays,
           daysCount,
           weekTotalCalories,
+          weeklyTargetCalories,
+          weeklyBalance,
+          weeklyBalanceFormatted,
+          weeklyBalanceLabel,
+          weeklyEstimateStr,
           weekTotalProtein,
           weekTotalCarbs,
           weekTotalFats,
@@ -340,6 +386,7 @@ export default function NutritionPage() {
           avgProtein,
           avgCarbs,
           avgFats,
+          weekMacros,
           daysGoalMetCount,
         };
       });
@@ -383,25 +430,50 @@ export default function NutritionPage() {
         </div>
 
         {/* Quick Water Action Buttons */}
-        <div className="flex items-center gap-2 p-2 bg-slate-950/80 rounded-2xl border border-slate-800">
+        <div className="flex flex-wrap items-center gap-2 p-2.5 bg-slate-950/80 rounded-2xl border border-slate-800">
           <div className="px-2 text-right">
-            <span className="text-xs text-slate-400 block font-medium">Água Hoje</span>
+            <span className="text-[10px] text-slate-400 block font-semibold uppercase tracking-wider">Água Hoje</span>
             <span className="text-sm font-extrabold text-cyan-400">{todayWaterTotal} ml</span>
           </div>
-          <button
-            onClick={() => handleAddWater(250)}
-            disabled={waterAdding}
-            className="px-3 py-2 rounded-xl bg-cyan-950/60 hover:bg-cyan-900/80 border border-cyan-500/30 text-cyan-300 text-xs font-bold transition active:scale-95"
-          >
-            +250ml
-          </button>
-          <button
-            onClick={() => handleAddWater(500)}
-            disabled={waterAdding}
-            className="px-3 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-slate-950 text-xs font-extrabold hover:opacity-90 transition active:scale-95 shadow-md shadow-cyan-500/20"
-          >
-            +500ml
-          </button>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => handleSubtractWater(250)}
+              disabled={waterAdding || todayWaterTotal <= 0}
+              title="Subtrair 250ml de água hoje"
+              className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-500/30 text-rose-400 text-xs font-bold transition active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1"
+            >
+              <Minus className="h-3 w-3" />
+              250ml
+            </button>
+            <button
+              onClick={() => handleSubtractWater(100)}
+              disabled={waterAdding || todayWaterTotal <= 0}
+              title="Subtrair 100ml de água hoje"
+              className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-rose-950/30 border border-slate-800 hover:border-rose-500/20 text-slate-300 hover:text-rose-300 text-xs font-bold transition active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1"
+            >
+              <Minus className="h-3 w-3" />
+              100ml
+            </button>
+            <button
+              onClick={() => handleAddWater(250)}
+              disabled={waterAdding}
+              title="Adicionar 250ml de água hoje"
+              className="px-2.5 py-1.5 rounded-xl bg-cyan-950/60 hover:bg-cyan-900/80 border border-cyan-500/30 text-cyan-300 text-xs font-bold transition active:scale-95 flex items-center gap-1"
+            >
+              <Plus className="h-3 w-3" />
+              250ml
+            </button>
+            <button
+              onClick={() => handleAddWater(500)}
+              disabled={waterAdding}
+              title="Adicionar 500ml de água hoje"
+              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-slate-950 text-xs font-extrabold hover:opacity-90 transition active:scale-95 shadow-md shadow-cyan-500/20 flex items-center gap-1"
+            >
+              <Plus className="h-3 w-3 stroke-[3]" />
+              500ml
+            </button>
+          </div>
         </div>
       </div>
 
@@ -469,13 +541,13 @@ export default function NutritionPage() {
                   key={week.weekKey}
                   className="glass-card rounded-2xl overflow-hidden border border-slate-800 space-y-0 transition duration-200"
                 >
-                  {/* LEVEL 1 HEADER: WEEKLY CONSOLIDATED TOTALS */}
+                  {/* LEVEL 1 HEADER: WEEKLY CONSOLIDATED TOTALS & SALDO SEMANAL */}
                   <button
                     onClick={() => toggleWeek(week.weekKey)}
-                    className="w-full p-5 bg-gradient-to-r from-slate-900/90 via-slate-900/80 to-slate-900/90 flex flex-col md:flex-row md:items-center justify-between gap-4 text-left border-b border-slate-800/80 hover:bg-slate-800/30 transition"
+                    className="w-full p-5 bg-gradient-to-r from-slate-900/95 via-slate-900/90 to-slate-900/95 flex flex-col lg:flex-row lg:items-center justify-between gap-4 text-left border-b border-slate-800/80 hover:bg-slate-800/30 transition"
                   >
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2.5">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-2.5 flex-wrap">
                         <span className="px-2.5 py-0.5 rounded font-bold text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                           Semana {week.weekNum}
                         </span>
@@ -484,10 +556,27 @@ export default function NutritionPage() {
                         </h4>
                       </div>
 
-                      <div className="flex items-center gap-2 pt-0.5">
-                        <span className="px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 text-[11px] font-medium flex items-center gap-1">
-                          <Award className="h-3 w-3 text-amber-400" />
-                          Consistência: <strong className="text-amber-300">{week.daysGoalMetCount} de {week.daysCount} dias</strong> na meta
+                      {/* Weekly Caloric Balance Highlight Card */}
+                      <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                        <div className={`px-3 py-1 rounded-xl border flex items-center gap-2 text-xs font-black shadow-md ${
+                          week.weeklyBalance > 0
+                            ? 'bg-amber-500/15 border-amber-500/30 text-amber-400 shadow-amber-500/10'
+                            : week.weeklyBalance < 0
+                            ? 'bg-cyan-500/15 border-cyan-500/30 text-cyan-400 shadow-cyan-500/10'
+                            : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400 shadow-emerald-500/10'
+                        }`}>
+                          {week.weeklyBalance > 0 ? (
+                            <Flame className="h-4 w-4 text-amber-400 animate-pulse" />
+                          ) : week.weeklyBalance < 0 ? (
+                            <TrendingDown className="h-4 w-4 text-cyan-400" />
+                          ) : (
+                            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                          )}
+                          <span>Saldo Semanal: {week.weeklyBalanceFormatted} ({week.weeklyBalanceLabel})</span>
+                        </div>
+
+                        <span className="text-[11px] text-slate-400 italic">
+                          • {week.weeklyEstimateStr}
                         </span>
                       </div>
                     </div>
@@ -504,12 +593,21 @@ export default function NutritionPage() {
                         <span className="text-xs font-extrabold text-white">{week.weekTotalCalories.toLocaleString('pt-BR')} kcal</span>
                       </div>
 
-                      <div className="flex items-center gap-1.5 bg-slate-950/60 p-1.5 rounded-xl border border-slate-800 text-[11px] font-bold">
-                        <span className="text-cyan-400 px-1.5">{week.avgProtein}g P</span>
-                        <span className="text-slate-600">•</span>
-                        <span className="text-emerald-400 px-1.5">{week.avgCarbs}g C</span>
-                        <span className="text-slate-600">•</span>
-                        <span className="text-indigo-400 px-1.5">{week.avgFats}g G</span>
+                      {/* Macro % Badge & 3-Color Bar */}
+                      <div className="flex flex-col items-end gap-1 bg-slate-950/80 p-2 rounded-xl border border-slate-800">
+                        <div className="flex items-center gap-1.5 text-[11px] font-bold">
+                          <span className="text-purple-400">P: {week.avgProtein}g ({week.weekMacros.pPct}%)</span>
+                          <span className="text-slate-600">•</span>
+                          <span className="text-cyan-400">C: {week.avgCarbs}g ({week.weekMacros.cPct}%)</span>
+                          <span className="text-slate-600">•</span>
+                          <span className="text-amber-400">G: {week.avgFats}g ({week.weekMacros.fPct}%)</span>
+                        </div>
+
+                        <div className="w-28 h-1.5 bg-slate-950 rounded-full overflow-hidden flex border border-slate-800">
+                          <div style={{ width: `${week.weekMacros.cPct}%` }} className="h-full bg-cyan-400 transition-all" title={`Carboidratos: ${week.weekMacros.cPct}%`} />
+                          <div style={{ width: `${week.weekMacros.pPct}%` }} className="h-full bg-purple-500 transition-all" title={`Proteínas: ${week.weekMacros.pPct}%`} />
+                          <div style={{ width: `${week.weekMacros.fPct}%` }} className="h-full bg-amber-400 transition-all" title={`Gorduras: ${week.weekMacros.fPct}%`} />
+                        </div>
                       </div>
 
                       <div className="p-1 rounded-lg bg-slate-800 text-slate-400 hover:text-white">
@@ -524,18 +622,34 @@ export default function NutritionPage() {
                       {week.days.map((day) => {
                         const isDayExpanded = Boolean(expandedDays[day.dateStr]);
 
-                        // Calorie Status Badge Color
-                        const isGoalHit = day.totalCalories >= targetCal * 0.85 && day.totalCalories <= targetCal * 1.15;
-                        const isExcess = day.totalCalories > targetCal * 1.15;
+                        // Daily Caloric Balance Calculation
+                        const dailyBalance = day.totalCalories - targetCal;
+                        const dailyBalanceFormatted =
+                          dailyBalance > 0
+                            ? `+${dailyBalance.toLocaleString('pt-BR')} kcal`
+                            : `${dailyBalance.toLocaleString('pt-BR')} kcal`;
+                        const isDailySurplus = dailyBalance > 0;
+                        const isDailyDeficit = dailyBalance < 0;
+                        const isDailyNeutral = dailyBalance === 0;
 
-                        const badgeClass = isGoalHit
-                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                          : isExcess
-                          ? 'bg-rose-500/10 text-rose-400 border-rose-500/30'
-                          : 'bg-amber-500/10 text-amber-400 border-amber-500/30';
+                        const dailyBalanceLabel = isDailySurplus
+                          ? 'Superávit Calórico'
+                          : isDailyDeficit
+                          ? 'Défice Calórico'
+                          : 'Neutro / Em Manutenção';
+
+                        const dailyBadgeClass = isDailySurplus
+                          ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                          : isDailyDeficit
+                          ? 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30'
+                          : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30';
 
                         const dayName = day.dateObj.toLocaleDateString('pt-BR', { weekday: 'long' });
-                        const dateFormatted = day.dateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+                        const dateFormatted = day.dateObj.toLocaleDateString('pt-BR', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          year: 'numeric',
+                        });
 
                         return (
                           <div
@@ -546,30 +660,100 @@ export default function NutritionPage() {
                             <div className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900">
                               <button
                                 onClick={() => toggleDay(day.dateStr)}
-                                className="flex-1 text-left space-y-1 hover:opacity-90 transition"
+                                className="flex-1 text-left space-y-1.5 hover:opacity-90 transition"
                               >
-                                <div className="flex items-center gap-2.5">
+                                <div className="flex flex-wrap items-center gap-2.5">
                                   <h5 className="font-extrabold text-white text-sm capitalize">
                                     {dayName}, {dateFormatted}
                                   </h5>
-                                  <span className={`px-2.5 py-0.5 rounded text-[11px] font-extrabold border ${badgeClass}`}>
+
+                                  <span className="px-2.5 py-0.5 rounded text-[11px] font-extrabold border bg-slate-950/80 border-slate-800 text-slate-300">
                                     {day.totalCalories} / {targetCal} kcal
+                                  </span>
+
+                                  {/* DAILY CALORIC BALANCE BADGE */}
+                                  <span className={`px-2.5 py-0.5 rounded text-[11px] font-black border flex items-center gap-1.5 ${dailyBadgeClass}`}>
+                                    {isDailySurplus ? (
+                                      <Flame className="h-3.5 w-3.5 text-amber-400 animate-pulse" />
+                                    ) : isDailyDeficit ? (
+                                      <TrendingDown className="h-3.5 w-3.5 text-cyan-400" />
+                                    ) : (
+                                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                                    )}
+                                    {dailyBalanceFormatted} ({dailyBalanceLabel})
                                   </span>
                                 </div>
 
-                                {/* Macros & Water Summary */}
-                                <div className="flex flex-wrap items-center gap-3 text-xs font-semibold pt-1">
-                                  <span className="text-cyan-400">Proteína: {day.totalProtein.toFixed(0)}g / {targetProt}g</span>
-                                  <span className="text-slate-600">•</span>
-                                  <span className="text-emerald-400">Carbos: {day.totalCarbs.toFixed(0)}g</span>
-                                  <span className="text-slate-600">•</span>
-                                  <span className="text-indigo-400">Gorduras: {day.totalFats.toFixed(0)}g</span>
-                                  <span className="text-slate-600">•</span>
-                                  <span className="text-cyan-300 font-bold flex items-center gap-1">
-                                    <Droplets className="h-3.5 w-3.5" />
-                                    Água: {day.waterMl} ml
-                                  </span>
-                                </div>
+                                {/* Macros % & Water Summary with Mini Action Pill Buttons */}
+                                {(() => {
+                                  const dayMacros = calculateMacroPercentages(day.totalProtein, day.totalCarbs, day.totalFats);
+                                  return (
+                                    <div className="flex flex-wrap items-center gap-3 text-xs font-semibold pt-1">
+                                      <span className="text-purple-400 font-bold">P: {day.totalProtein.toFixed(0)}g ({dayMacros.pPct}%)</span>
+                                      <span className="text-slate-600">•</span>
+                                      <span className="text-cyan-400 font-bold">C: {day.totalCarbs.toFixed(0)}g ({dayMacros.cPct}%)</span>
+                                      <span className="text-slate-600">•</span>
+                                      <span className="text-amber-400 font-bold">G: {day.totalFats.toFixed(0)}g ({dayMacros.fPct}%)</span>
+                                      <span className="text-slate-600">•</span>
+                                      <div className="w-16 h-1.5 bg-slate-950 rounded-full overflow-hidden flex border border-slate-800 self-center">
+                                        <div style={{ width: `${dayMacros.cPct}%` }} className="h-full bg-cyan-400" />
+                                        <div style={{ width: `${dayMacros.pPct}%` }} className="h-full bg-purple-500" />
+                                        <div style={{ width: `${dayMacros.fPct}%` }} className="h-full bg-amber-400" />
+                                      </div>
+                                      <span className="text-slate-600">•</span>
+
+                                      {/* Water Indicator & Mini Pill Action Buttons */}
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="text-cyan-300 font-bold flex items-center gap-1">
+                                          <Droplets className="h-3.5 w-3.5 text-cyan-400" />
+                                          Água: {day.waterMl} ml
+                                        </span>
+
+                                        {/* Mini Pill Buttons */}
+                                        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleSubtractWater(100, day.dateStr);
+                                            }}
+                                            disabled={waterAdding || day.waterMl <= 0}
+                                            title={`Subtrair 100ml em ${day.dateStr}`}
+                                            className="px-2 py-0.5 rounded-full bg-slate-800 hover:bg-rose-950/40 border border-slate-700 hover:border-rose-500/30 text-slate-300 hover:text-rose-300 text-[10px] font-bold transition active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-0.5"
+                                          >
+                                            <Minus className="h-2.5 w-2.5" />
+                                            100ml
+                                          </button>
+
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleAddWater(250, day.dateStr);
+                                            }}
+                                            disabled={waterAdding}
+                                            title={`Adicionar 250ml em ${day.dateStr}`}
+                                            className="px-2 py-0.5 rounded-full bg-cyan-950/60 hover:bg-cyan-900 border border-cyan-500/30 text-cyan-300 text-[10px] font-bold transition active:scale-95 flex items-center gap-0.5"
+                                          >
+                                            <Plus className="h-2.5 w-2.5" />
+                                            250ml
+                                          </button>
+
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleAddWater(500, day.dateStr);
+                                            }}
+                                            disabled={waterAdding}
+                                            title={`Adicionar 500ml em ${day.dateStr}`}
+                                            className="px-2 py-0.5 rounded-full bg-gradient-to-r from-cyan-500 to-blue-600 text-slate-950 text-[10px] font-extrabold hover:opacity-90 transition active:scale-95 flex items-center gap-0.5 shadow-sm shadow-cyan-500/20"
+                                          >
+                                            <Plus className="h-2.5 w-2.5 stroke-[3]" />
+                                            500ml
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
                               </button>
 
                               <button
@@ -580,70 +764,70 @@ export default function NutritionPage() {
                               </button>
                             </div>
 
-                            {/* LEVEL 3: INDIVIDUAL MEALS INSIDE DAY */}
+                            {/* LEVEL 3: DIRECT MEALS LIST INSIDE DAY (NO REDUNDANT CENTRAL CARDS) */}
                             {isDayExpanded && (
-                              <div className="p-4 pt-0 border-t border-slate-800/60 space-y-3 bg-slate-950/60">
-                                <div className="space-y-2 pt-3">
-                                  {day.meals.map((meal) => (
-                                    <div
-                                      key={meal.id}
-                                      className="p-3.5 rounded-xl bg-slate-900 border border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-slate-700 transition group"
-                                    >
-                                      <div className="space-y-1">
-                                        <div className="flex items-center gap-2">
-                                          <span className="px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 text-[10px] font-bold uppercase">
-                                            {meal.meal_type || 'Refeição'}
-                                          </span>
-                                          <h6 className="font-bold text-white text-sm">{meal.meal_name}</h6>
-                                        </div>
-
-                                        <p className="text-[11px] text-slate-400 flex items-center gap-2">
-                                          <Clock className="h-3 w-3" />
-                                          {new Date(meal.logged_at).toLocaleTimeString('pt-BR', {
-                                            hour: '2-digit',
-                                            minute: '2-digit',
-                                          })}
-                                          {meal.raw_input && (
-                                            <span className="text-slate-500 italic truncate max-w-xs">
-                                              - &quot;{meal.raw_input}&quot;
+                              <div className="border-t border-slate-800/60 bg-slate-950/60 p-4 space-y-3">
+                                  <div className="space-y-2">
+                                    {day.meals.map((meal) => (
+                                      <div
+                                        key={meal.id}
+                                        className="p-3.5 rounded-xl bg-slate-900 border border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-slate-700 transition group"
+                                      >
+                                        <div className="space-y-1">
+                                          <div className="flex items-center gap-2">
+                                            <span className="px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 text-[10px] font-bold uppercase">
+                                              {meal.meal_type || 'Refeição'}
                                             </span>
-                                          )}
-                                        </p>
-                                      </div>
+                                            <h6 className="font-bold text-white text-sm">{meal.meal_name}</h6>
+                                          </div>
 
-                                      {/* Meal Macros & Actions */}
-                                      <div className="flex items-center justify-between sm:justify-end gap-3">
-                                        <div className="flex items-center gap-2 text-xs font-semibold">
-                                          <span className="px-2 py-1 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                                            {meal.calories} kcal
-                                          </span>
-                                          <span className="text-cyan-300">{meal.protein_g}g P</span>
-                                          <span className="text-emerald-300">{meal.carbs_g}g C</span>
-                                          <span className="text-indigo-300">{meal.fats_g}g G</span>
+                                          <p className="text-[11px] text-slate-400 flex items-center gap-2">
+                                            <Clock className="h-3 w-3" />
+                                            {new Date(meal.logged_at).toLocaleTimeString('pt-BR', {
+                                              hour: '2-digit',
+                                              minute: '2-digit',
+                                            })}
+                                            {meal.raw_input && (
+                                              <span className="text-slate-500 italic truncate max-w-xs">
+                                                - &quot;{meal.raw_input}&quot;
+                                              </span>
+                                            )}
+                                          </p>
                                         </div>
 
-                                        <div className="flex items-center gap-1 border-l border-slate-800 pl-2">
-                                          <button
-                                            onClick={() => openEditMealModal(meal)}
-                                            className="p-1.5 rounded-lg text-slate-400 hover:text-cyan-300 hover:bg-slate-800 transition"
-                                            title="Editar refeição"
-                                          >
-                                            <Edit2 className="h-3.5 w-3.5" />
-                                          </button>
-                                          <button
-                                            onClick={() => handleDeleteMeal(meal.id)}
-                                            className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-slate-800 transition"
-                                            title="Excluir refeição"
-                                          >
-                                            <Trash2 className="h-3.5 w-3.5" />
-                                          </button>
+                                        {/* Meal Macros & Actions */}
+                                        <div className="flex items-center justify-between sm:justify-end gap-3">
+                                          <div className="flex items-center gap-2 text-xs font-semibold">
+                                            <span className="px-2 py-1 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                              {meal.calories} kcal
+                                            </span>
+                                            <span className="text-cyan-300">{meal.protein_g}g P</span>
+                                            <span className="text-emerald-300">{meal.carbs_g}g C</span>
+                                            <span className="text-indigo-300">{meal.fats_g}g G</span>
+                                          </div>
+
+                                          <div className="flex items-center gap-1 border-l border-slate-800 pl-2">
+                                            <button
+                                              onClick={() => openEditMealModal(meal)}
+                                              className="p-1.5 rounded-lg text-slate-400 hover:text-cyan-300 hover:bg-slate-800 transition"
+                                              title="Editar refeição"
+                                            >
+                                              <Edit2 className="h-3.5 w-3.5" />
+                                            </button>
+                                            <button
+                                              onClick={() => handleDeleteMeal(meal.id)}
+                                              className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-slate-800 transition"
+                                              title="Excluir refeição"
+                                            >
+                                              <Trash2 className="h-3.5 w-3.5" />
+                                            </button>
+                                          </div>
                                         </div>
                                       </div>
-                                    </div>
-                                  ))}
+                                    ))}
+                                  </div>
                                 </div>
-                              </div>
-                            )}
+                              )}
                           </div>
                         );
                       })}

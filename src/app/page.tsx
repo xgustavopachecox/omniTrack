@@ -1,14 +1,18 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { OmniStore } from '@/lib/store';
 import { Profile, NutritionLog, WorkoutSession, BodyMetric, WaterLog, SecondBrainNote } from '@/lib/types';
+import { calculateMacroPercentages, calculateWeeklyStreak } from '@/lib/consistency';
+import { computeMuscleHeatmap } from '@/lib/heatmap';
+import { BodyHeatmap } from '@/components/ui/BodyHeatmap';
 import {
   Flame,
   Droplets,
   Dumbbell,
   Plus,
+  Minus,
   Brain,
   Scale,
   TrendingDown,
@@ -17,6 +21,8 @@ import {
   CheckCircle2,
   AlertCircle,
   Apple,
+  Zap,
+  Activity,
 } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -49,47 +55,108 @@ export default function DashboardPage() {
     loadData();
   }, []);
 
-  const handleAddWater = async (amount: number) => {
+  const handleAddWater = useCallback(async (amount: number) => {
     setWaterAdding(true);
     await OmniStore.addWaterLog(amount);
     await loadData();
     setWaterAdding(false);
-  };
+  }, []);
 
-  // Calculations for Today's Stats
-  const todayStr = new Date().toISOString().split('T')[0];
+  const handleSubtractWater = useCallback(async (amount: number) => {
+    setWaterAdding(true);
+    await OmniStore.subtractWaterLog(amount);
+    await loadData();
+    setWaterAdding(false);
+  }, []);
 
-  const todayNutrition = nutritionLogs.filter(
-    (l) => l.logged_at.split('T')[0] === todayStr
-  );
-  const totalCalories = todayNutrition.reduce((acc, curr) => acc + curr.calories, 0);
-  const totalProtein = todayNutrition.reduce((acc, curr) => acc + Number(curr.protein_g), 0);
-  const totalCarbs = todayNutrition.reduce((acc, curr) => acc + Number(curr.carbs_g), 0);
-  const totalFats = todayNutrition.reduce((acc, curr) => acc + Number(curr.fats_g), 0);
+  // Calculations for Today's Stats (Memoized for high performance)
+  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
 
-  const targetCal = profile?.daily_calorie_target || 2500;
-  const targetProt = profile?.daily_protein_target || 160;
-  const targetCarbs = profile?.daily_carbs_target || 280;
-  const targetFats = profile?.daily_fats_target || 70;
-  const targetWater = profile?.daily_water_target || 3000;
+  const {
+    totalCalories,
+    totalProtein,
+    totalCarbs,
+    totalFats,
+    targetCal,
+    targetProt,
+    targetCarbs,
+    targetFats,
+    targetWater,
+    calPercentage,
+    protPercentage,
+    carbsPercentage,
+    fatsPercentage,
+    todayWater,
+    waterPercentage,
+    workoutToday,
+    latestNote,
+    latestWeight,
+    prevWeight,
+    todayMacros,
+    weeklyStreakData,
+    heatmapData,
+  } = useMemo(() => {
+    const todayNutrition = nutritionLogs.filter(
+      (l) => l.logged_at.split('T')[0] === todayStr
+    );
+    const totCal = todayNutrition.reduce((acc, curr) => acc + curr.calories, 0);
+    const totProt = todayNutrition.reduce((acc, curr) => acc + Number(curr.protein_g), 0);
+    const totCarbs = todayNutrition.reduce((acc, curr) => acc + Number(curr.carbs_g), 0);
+    const totFats = todayNutrition.reduce((acc, curr) => acc + Number(curr.fats_g), 0);
 
-  const calPercentage = Math.min(100, Math.round((totalCalories / targetCal) * 100));
-  const protPercentage = Math.min(100, Math.round((totalProtein / targetProt) * 100));
-  const carbsPercentage = Math.min(100, Math.round((totalCarbs / targetCarbs) * 100));
-  const fatsPercentage = Math.min(100, Math.round((totalFats / targetFats) * 100));
+    const tCal = profile?.daily_calorie_target || 2500;
+    const tProt = profile?.daily_protein_target || 160;
+    const tCarbs = profile?.daily_carbs_target || 280;
+    const tFats = profile?.daily_fats_target || 70;
+    const tWater = profile?.daily_water_target || 3000;
 
-  const todayWater = waterLogs
-    .filter((w) => w.logged_at.split('T')[0] === todayStr)
-    .reduce((acc, curr) => acc + curr.amount_ml, 0);
-  const waterPercentage = Math.min(100, Math.round((todayWater / targetWater) * 100));
+    const calPct = Math.min(100, Math.round((totCal / tCal) * 100));
+    const protPct = Math.min(100, Math.round((totProt / tProt) * 100));
+    const carbsPct = Math.min(100, Math.round((totCarbs / tCarbs) * 100));
+    const fatsPct = Math.min(100, Math.round((totFats / tFats) * 100));
 
-  const workoutToday = workoutSessions.some(
-    (s) => s.session_date === todayStr || s.created_at.split('T')[0] === todayStr
-  );
+    const waterSum = waterLogs
+      .filter((w) => w.logged_at.split('T')[0] === todayStr)
+      .reduce((acc, curr) => acc + curr.amount_ml, 0);
+    const waterPct = Math.min(100, Math.round((waterSum / tWater) * 100));
 
-  const latestNote = notes[0];
-  const latestWeight = bodyMetrics[bodyMetrics.length - 1];
-  const prevWeight = bodyMetrics.length > 1 ? bodyMetrics[bodyMetrics.length - 2] : null;
+    const wToday = workoutSessions.some(
+      (s) => s.session_date === todayStr || s.created_at.split('T')[0] === todayStr
+    );
+
+    const lNote = notes[0];
+    const lWeight = bodyMetrics[bodyMetrics.length - 1];
+    const pWeight = bodyMetrics.length > 1 ? bodyMetrics[bodyMetrics.length - 2] : null;
+
+    const tMacros = calculateMacroPercentages(totProt, totCarbs, totFats);
+    const wStreak = calculateWeeklyStreak(workoutSessions, profile?.weekly_workout_target || 4);
+    const hData = computeMuscleHeatmap(workoutSessions, 7);
+
+    return {
+      totalCalories: totCal,
+      totalProtein: totProt,
+      totalCarbs: totCarbs,
+      totalFats: totFats,
+      targetCal: tCal,
+      targetProt: tProt,
+      targetCarbs: tCarbs,
+      targetFats: tFats,
+      targetWater: tWater,
+      calPercentage: calPct,
+      protPercentage: protPct,
+      carbsPercentage: carbsPct,
+      fatsPercentage: fatsPct,
+      todayWater: waterSum,
+      waterPercentage: waterPct,
+      workoutToday: wToday,
+      latestNote: lNote,
+      latestWeight: lWeight,
+      prevWeight: pWeight,
+      todayMacros: tMacros,
+      weeklyStreakData: wStreak,
+      heatmapData: hData,
+    };
+  }, [nutritionLogs, waterLogs, workoutSessions, bodyMetrics, notes, profile, todayStr]);
 
   return (
     <div className="space-y-8 animate-fadeIn">
@@ -110,7 +177,22 @@ export default function DashboardPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col sm:flex-row items-center gap-3">
+          {/* Weekly Streak Badge */}
+          <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-2xl bg-slate-950/90 border border-amber-500/40 shadow-lg shadow-amber-500/10">
+            <div className="p-1.5 rounded-xl bg-amber-500/20 text-amber-400">
+              <Zap className="h-4 w-4 fill-amber-400 animate-pulse" />
+            </div>
+            <div className="text-left">
+              <span className="text-xs font-black text-white block tracking-tight">
+                ⚡ {weeklyStreakData.currentStreak} Semanas Seguidas
+              </span>
+              <span className="text-[10px] text-amber-400 font-bold block">
+                {weeklyStreakData.currentWeekWorkouts}/{weeklyStreakData.targetWorkoutsPerWeek} treinos na semana
+              </span>
+            </div>
+          </div>
+
           <Link
             href="/nutrition"
             className="px-4 py-2.5 rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 text-xs font-semibold hover:bg-cyan-500/20 transition flex items-center gap-2"
@@ -149,14 +231,33 @@ export default function DashboardPage() {
               </span>
             </div>
 
-            <div className="my-4 text-center">
-              <span className="text-4xl font-extrabold text-white tracking-tight">
-                {totalCalories}
-              </span>
-              <span className="text-slate-400 text-sm ml-1">/ {targetCal} kcal</span>
-              <p className="text-xs text-slate-400 mt-1">
-                Restam <strong className="text-amber-400">{Math.max(0, targetCal - totalCalories)} kcal</strong> hoje
-              </p>
+            <div className="my-4 text-center space-y-1.5">
+              <div>
+                <span className="text-4xl font-extrabold text-white tracking-tight">
+                  {totalCalories}
+                </span>
+                <span className="text-slate-400 text-sm ml-1">/ {targetCal} kcal</span>
+              </div>
+
+              {/* Energy Surplus / Deficit Badge */}
+              <div className="pt-0.5">
+                {totalCalories > targetCal ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-xs font-extrabold">
+                    <Flame className="h-3.5 w-3.5" />
+                    +{totalCalories - targetCal} kcal (Superávit Calórico)
+                  </span>
+                ) : totalCalories < targetCal ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 text-xs font-extrabold">
+                    <TrendingDown className="h-3.5 w-3.5" />
+                    {totalCalories - targetCal} kcal (Défice Calórico)
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-extrabold">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    0 kcal (Em Manutenção)
+                  </span>
+                )}
+              </div>
             </div>
           </div>
 
@@ -228,9 +329,18 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <p className="text-[11px] text-slate-400 mt-4 border-t border-slate-800 pt-3">
-            Baseado no protocolo de precisão metabólica.
-          </p>
+          {/* 3-Color Segmented Caloric Macro Bar & Badge */}
+          <div className="mt-4 pt-3 border-t border-slate-800 space-y-1.5">
+            <div className="flex items-center justify-between text-[11px] font-bold">
+              <span className="text-slate-400">Distribuição % de Kcal:</span>
+              <span className="text-purple-300">P:{todayMacros.pPct}% | C:{todayMacros.cPct}% | G:{todayMacros.fPct}%</span>
+            </div>
+            <div className="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden flex border border-slate-800">
+              <div style={{ width: `${todayMacros.cPct}%` }} className="h-full bg-cyan-400 transition-all" title={`Carboidratos: ${todayMacros.cPct}%`} />
+              <div style={{ width: `${todayMacros.pPct}%` }} className="h-full bg-purple-500 transition-all" title={`Proteínas: ${todayMacros.pPct}%`} />
+              <div style={{ width: `${todayMacros.fPct}%` }} className="h-full bg-amber-400 transition-all" title={`Gorduras: ${todayMacros.fPct}%`} />
+            </div>
+          </div>
         </div>
 
         {/* Water Intake Quick Card */}
@@ -261,27 +371,50 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Quick Add Water Buttons */}
-          <div className="grid grid-cols-2 gap-2">
+          {/* Quick Water Action Buttons (Subtract & Add) */}
+          <div className="grid grid-cols-4 gap-1.5">
+            <button
+              onClick={() => handleSubtractWater(250)}
+              disabled={waterAdding || todayWater <= 0}
+              className="py-2 px-1.5 rounded-xl bg-slate-900 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-500/30 text-rose-400 text-[11px] font-bold flex items-center justify-center gap-0.5 transition active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed"
+              title="Subtrair 250ml"
+            >
+              <Minus className="h-3 w-3" />
+              250
+            </button>
+            <button
+              onClick={() => handleSubtractWater(100)}
+              disabled={waterAdding || todayWater <= 0}
+              className="py-2 px-1.5 rounded-xl bg-slate-900 hover:bg-rose-950/30 border border-slate-800 hover:border-rose-500/20 text-slate-300 hover:text-rose-300 text-[11px] font-bold flex items-center justify-center gap-0.5 transition active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed"
+              title="Subtrair 100ml"
+            >
+              <Minus className="h-3 w-3" />
+              100
+            </button>
             <button
               onClick={() => handleAddWater(250)}
               disabled={waterAdding}
-              className="py-2 px-3 rounded-xl bg-cyan-950/40 hover:bg-cyan-900/50 border border-cyan-500/30 text-cyan-300 text-xs font-semibold flex items-center justify-center gap-1.5 transition active:scale-95"
+              className="py-2 px-1.5 rounded-xl bg-cyan-950/50 hover:bg-cyan-900/60 border border-cyan-500/30 text-cyan-300 text-[11px] font-bold flex items-center justify-center gap-0.5 transition active:scale-95"
+              title="Adicionar 250ml"
             >
-              <Plus className="h-3.5 w-3.5" />
-              +250 ml
+              <Plus className="h-3 w-3" />
+              250
             </button>
             <button
               onClick={() => handleAddWater(500)}
               disabled={waterAdding}
-              className="py-2 px-3 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-slate-950 text-xs font-bold flex items-center justify-center gap-1.5 hover:opacity-90 transition active:scale-95 shadow-md shadow-cyan-500/20"
+              className="py-2 px-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-slate-950 text-[11px] font-extrabold flex items-center justify-center gap-0.5 hover:opacity-90 transition active:scale-95 shadow-md shadow-cyan-500/20"
+              title="Adicionar 500ml"
             >
-              <Plus className="h-3.5 w-3.5" />
-              +500 ml
+              <Plus className="h-3 w-3 stroke-[3]" />
+              500
             </button>
           </div>
         </div>
       </div>
+
+      {/* BODY HEATMAP COMPACT WIDGET */}
+      <BodyHeatmap data={heatmapData} compact />
 
       {/* Secondary Row: Workout Status & Quick Widgets */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
