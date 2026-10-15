@@ -27,6 +27,7 @@ const parseEditalResponseSchema = z.object({
 export async function POST(req: NextRequest) {
   try {
     let pdfBase64: string | null = null;
+    let pdfMimeType = 'application/pdf';
     let rawText: string | null = null;
     let targetRoles = 'Cargos Principais do Edital';
 
@@ -34,26 +35,29 @@ export async function POST(req: NextRequest) {
 
     if (contentType.includes('multipart/form-data')) {
       const formData = await req.formData();
-      const rolesInput = formData.get('target_roles');
+      const rolesInput = formData.get('target_roles') || formData.get('targetRoles');
       if (typeof rolesInput === 'string' && rolesInput.trim()) {
         targetRoles = rolesInput.trim();
       }
 
-      const textInput = formData.get('raw_text');
+      const textInput = formData.get('raw_text') || formData.get('rawText');
       if (typeof textInput === 'string' && textInput.trim()) {
         rawText = textInput.trim();
       }
 
-      const file = formData.get('file') || formData.get('pdf');
+      const file = formData.get('file') || formData.get('pdf') || formData.get('editalPdf');
       if (file && file instanceof Blob) {
+        if (file.type) pdfMimeType = file.type;
         const arrayBuffer = await file.arrayBuffer();
         pdfBase64 = Buffer.from(arrayBuffer).toString('base64');
       }
     } else {
       const body = await req.json().catch(() => ({}));
-      if (body.target_roles) targetRoles = body.target_roles;
-      if (body.raw_text) rawText = body.raw_text;
-      if (body.pdfBase64) pdfBase64 = body.pdfBase64;
+      if (body.target_roles || body.targetRoles) targetRoles = body.target_roles || body.targetRoles;
+      if (body.raw_text || body.rawText) rawText = body.raw_text || body.rawText;
+      if (body.pdfBase64 || body.file || body.pdf || body.editalPdf) {
+        pdfBase64 = body.pdfBase64 || body.file || body.pdf || body.editalPdf;
+      }
     }
 
     if (!pdfBase64 && !rawText) {
@@ -186,7 +190,7 @@ Retorne estritamente a saída formatada de acordo com o JSON Schema solicitado.`
     if (pdfBase64) {
       contents.push({
         inlineData: {
-          mimeType: 'application/pdf',
+          mimeType: pdfMimeType || 'application/pdf',
           data: pdfBase64,
         },
       });

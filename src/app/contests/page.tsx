@@ -303,13 +303,20 @@ export default function ContestsPage() {
     setImportError(null);
 
     try {
+      if (!importFile && !importRawText.trim()) {
+        throw new Error('Por favor, selecione um arquivo PDF do edital ou cole o conteúdo programático.');
+      }
+
       const formData = new FormData();
       if (importFile) {
-        formData.append('editalPdf', importFile);
+        formData.append('file', importFile);
+        formData.append('pdf', importFile);
       }
       if (importRawText) {
+        formData.append('raw_text', importRawText);
         formData.append('rawText', importRawText);
       }
+      formData.append('target_roles', importTargetRoles);
       formData.append('targetRoles', importTargetRoles);
 
       const res = await fetch('/api/gemini/parse-contest-doc', {
@@ -319,7 +326,7 @@ export default function ContestsPage() {
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || 'Falha ao processar documento de edital.');
+        throw new Error(data.details || data.error || 'Falha ao processar documento de edital.');
       }
 
       setParsedSummary(data);
@@ -331,6 +338,8 @@ export default function ContestsPage() {
         `Edital "${imported.contest.title}" importado com ${imported.subjectsCount} tópicos e ${imported.tafCount} requisitos TAF!`
       );
       setShowImportEditalModal(false);
+      setImportFile(null);
+      setImportRawText('');
       await loadAllData();
     } catch (err: any) {
       console.error(err);
@@ -2158,9 +2167,18 @@ export default function ContestsPage() {
                 <input
                   type="file"
                   accept="application/pdf"
-                  onChange={(e) => setImportFile(e.target.files?.[0] || null)}
-                  className="w-full text-xs text-slate-400 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-slate-800 file:text-cyan-400"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null;
+                    setImportFile(file);
+                    if (file) setImportError(null);
+                  }}
+                  className="w-full text-xs text-slate-400 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-slate-800 file:text-cyan-400 hover:file:bg-slate-700 cursor-pointer"
                 />
+                {importFile && (
+                  <p className="text-[11px] text-emerald-400 mt-1 font-medium flex items-center gap-1">
+                    ✓ Arquivo selecionado: {importFile.name} ({(importFile.size / 1024 / 1024).toFixed(2)} MB)
+                  </p>
+                )}
               </div>
 
               <div>
@@ -2169,7 +2187,21 @@ export default function ContestsPage() {
                   rows={4}
                   placeholder="Cole aqui o texto do edital contendo as matérias e tópicos..."
                   value={importRawText}
-                  onChange={(e) => setImportRawText(e.target.value)}
+                  onChange={(e) => {
+                    setImportRawText(e.target.value);
+                    if (e.target.value.trim()) setImportError(null);
+                  }}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-400 font-bold mb-1 block">Cargos de Interesse (Opcional)</label>
+                <input
+                  type="text"
+                  placeholder="Ex: Agente de Polícia, Escrivão, Perito..."
+                  value={importTargetRoles}
+                  onChange={(e) => setImportTargetRoles(e.target.value)}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
                 />
               </div>
@@ -2178,8 +2210,8 @@ export default function ContestsPage() {
 
               <button
                 type="submit"
-                disabled={isParsingEdital}
-                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-slate-950 font-extrabold text-xs shadow-lg shadow-cyan-500/20 flex items-center justify-center gap-2"
+                disabled={isParsingEdital || (!importFile && !importRawText.trim())}
+                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 font-extrabold text-xs shadow-lg shadow-cyan-500/20 flex items-center justify-center gap-2 transition"
               >
                 <Sparkles className="h-4 w-4" />
                 {isParsingEdital ? 'Extraindo Conteúdo Programático...' : 'Extrair Edital Verticalizado'}
