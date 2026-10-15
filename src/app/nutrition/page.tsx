@@ -150,7 +150,10 @@ export default function NutritionPage() {
         });
       }
 
-      if (!res.ok) throw new Error('Falha ao processar a refeição.');
+      if (!res.ok) {
+        const errorJson = await res.json().catch(() => null);
+        throw new Error(errorJson?.error || 'Falha ao processar a refeição.');
+      }
 
       const data: GeminiNutritionResponse = await res.json();
       const todayStr = new Date().toISOString().split('T')[0];
@@ -170,7 +173,7 @@ export default function NutritionPage() {
       showToast('Refeição computada e macros atualizados!');
     } catch (err: any) {
       console.error(err);
-      showToast('Erro ao processar refeição. Tente novamente.');
+      showToast(err.message || 'Erro ao processar refeição. Tente novamente.');
     } finally {
       setIsLoading(false);
     }

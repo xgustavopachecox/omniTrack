@@ -445,10 +445,13 @@ export default function ContestsPage() {
       });
 
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Erro ao consultar Gemini IA.');
+      }
       setAiResponse(data);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      showToast('Erro ao consultar Gemini IA.');
+      showToast(err.message || 'Erro ao consultar Gemini IA.');
     } finally {
       setAiLoading(false);
     }
@@ -513,6 +516,10 @@ export default function ContestsPage() {
       });
 
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Falha ao gerar simulado via IA.');
+      }
+
       if (data.questions && data.questions.length > 0) {
         const created = await OmniStore.createMockExam(
           {
@@ -532,9 +539,9 @@ export default function ContestsPage() {
       } else {
         showToast('Falha ao gerar simulado via IA.');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      showToast('Erro ao conectar com serviço da IA.');
+      showToast(err.message || 'Erro ao conectar com serviço da IA.');
     } finally {
       setIsGeneratingAiExam(false);
     }
@@ -579,6 +586,9 @@ export default function ContestsPage() {
         }),
       });
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Erro ao obter explicação da IA.');
+      }
       if (data.ai_clarification) {
         await OmniStore.updateErrorClarification(item.id, data.ai_clarification);
         if (data.suggested_error_reason && (!item.error_reason || item.error_reason === 'Não sabia o conteúdo')) {
@@ -587,9 +597,9 @@ export default function ContestsPage() {
         showToast('Explicação mastigada da IA gerada!');
         await loadAllData();
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      showToast('Erro ao obter explicação da IA.');
+      showToast(err.message || 'Erro ao obter explicação da IA.');
     } finally {
       setIsExplainingErrorId(null);
     }

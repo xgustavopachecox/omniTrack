@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
+import { generateContentWithRetry, handleGeminiApiError } from '@/lib/gemini';
 
 const muscleScoreSchema = z.object({
   nota: z.number().nullable(),
@@ -135,7 +136,7 @@ Destaque o que está desproporcional ou atrasado e forneça recomendações biom
       { text: jsonStructurePrompt },
     ];
 
-    const response = await ai.models.generateContent({
+    const response = await generateContentWithRetry(ai, {
       model: 'gemini-3.8-flash',
       contents,
       config: {
@@ -151,14 +152,6 @@ Destaque o que está desproporcional ou atrasado e forneça recomendações biom
     return NextResponse.json(validated);
   } catch (error: any) {
     console.error('Error in /api/gemini/physique-assessment:', error);
-    return NextResponse.json(
-      {
-        error: 'Falha ao processar avaliação física via Gemini Vision',
-        details: error?.message || String(error),
-        status: error?.status,
-        code: error?.code,
-      },
-      { status: 500 }
-    );
+    return handleGeminiApiError(error, 'Falha ao processar avaliação física via Gemini Vision');
   }
 }

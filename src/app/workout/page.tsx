@@ -147,7 +147,8 @@ export default function WorkoutPage() {
       }
 
       if (!res.ok) {
-        throw new Error('Falha ao processar treino.');
+        const errorJson = await res.json().catch(() => null);
+        throw new Error(errorJson?.error || 'Falha ao processar treino.');
       }
 
       const data: GeminiWorkoutSessionResponse = await res.json();
@@ -163,7 +164,7 @@ export default function WorkoutPage() {
       showToast('Sessão de treino e recordes salvos com sucesso!');
     } catch (err: any) {
       console.error(err);
-      showToast('Erro ao processar treino. Tente novamente. Verifique se a chave da API está configurada');
+      showToast(err.message || 'Erro ao processar treino. Tente novamente.');
     } finally {
       setIsLoading(false);
     }

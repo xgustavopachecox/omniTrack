@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
+import { generateContentWithRetry, handleGeminiApiError } from '@/lib/gemini';
 
 const explainErrorSchema = z.object({
   ai_clarification: z.string(),
@@ -53,7 +54,7 @@ Instruções:
 
 Formate a resposta em JSON respeitando o schema.`;
 
-    const response = await ai.models.generateContent({
+    const response = await generateContentWithRetry(ai, {
       model: 'gemini-3.8-flash',
       contents: prompt,
       config: {
@@ -77,14 +78,6 @@ Formate a resposta em JSON respeitando o schema.`;
     return NextResponse.json(validatedData);
   } catch (error: any) {
     console.error('Error generating AI error clarification:', error);
-    return NextResponse.json(
-      {
-        error: 'Falha ao gerar explicação da IA.',
-        details: error?.message || String(error),
-        status: error?.status,
-        code: error?.code,
-      },
-      { status: 500 }
-    );
+    return handleGeminiApiError(error, 'Falha ao gerar explicação da IA.');
   }
 }

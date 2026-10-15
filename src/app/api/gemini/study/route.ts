@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
+import { generateContentWithRetry, handleGeminiApiError } from '@/lib/gemini';
 
 const studyResponseSchema = z.object({
   mode: z.enum(['doubt', 'mnemonic', 'question']),
@@ -157,7 +158,7 @@ Analise a solicitação do candidato para o tópico "${topicName}" e forneça um
 }`,
     });
 
-    const response = await ai.models.generateContent({
+    const response = await generateContentWithRetry(ai, {
       model: 'gemini-3.8-flash',
       contents,
       config: {
@@ -173,14 +174,6 @@ Analise a solicitação do candidato para o tópico "${topicName}" e forneça um
     return NextResponse.json(validated);
   } catch (error: any) {
     console.error('Error in /api/gemini/study:', error);
-    return NextResponse.json(
-      {
-        error: 'Falha ao processar auxílio de estudos via Gemini',
-        details: error?.message || String(error),
-        status: error?.status,
-        code: error?.code,
-      },
-      { status: 500 }
-    );
+    return handleGeminiApiError(error, 'Falha ao processar auxílio de estudos via Gemini');
   }
 }
