@@ -94,7 +94,7 @@ Exigências:
 Formate a resposta rigorosamente em JSON respeitando o schema fornecido.`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-3.8-flash',
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
@@ -143,7 +143,12 @@ Formate a resposta rigorosamente em JSON respeitando o schema fornecido.`;
   } catch (error: any) {
     console.error('Error generating mock exam with Gemini:', error);
     return NextResponse.json(
-      { error: 'Falha ao gerar simulado com IA.', details: error?.message },
+      {
+        error: 'Falha ao gerar simulado com IA.',
+        details: error?.message || String(error),
+        status: error?.status,
+        code: error?.code,
+      },
       { status: 500 }
     );
   }

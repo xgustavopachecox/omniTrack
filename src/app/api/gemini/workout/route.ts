@@ -138,7 +138,7 @@ export async function POST(req: NextRequest) {
     });
 
     const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-3.8-flash',
       contents,
       config: {
         responseMimeType: 'application/json',
@@ -154,7 +154,12 @@ export async function POST(req: NextRequest) {
   } catch (error: any) {
     console.error('Error in /api/gemini/workout:', error);
     return NextResponse.json(
-      { error: 'Falha ao processar treino via IA', details: error.message },
+      {
+        error: 'Falha ao processar treino via IA',
+        details: error?.message || String(error),
+        status: error?.status,
+        code: error?.code,
+      },
       { status: 500 }
     );
   }

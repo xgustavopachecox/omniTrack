@@ -94,25 +94,30 @@ export async function POST(req: NextRequest) {
 }`,
     });
 
-    const response = await ai.gemini - 1.5 - flashs.generateContent({
-      gemini- 1.5 - flash: 'gemini-1.5-flash',
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
       contents,
       config: {
-      responseMimeType: 'application/json',
-    },
+        responseMimeType: 'application/json',
+      },
     });
 
-  const responseText = response.text || '';
-  const cleanedJsonStr = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-  const parsed = JSON.parse(cleanedJsonStr);
-  const validated = nutritionResponseSchema.parse(parsed);
+    const responseText = response.text || '';
+    const cleanedJsonStr = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+    const parsed = JSON.parse(cleanedJsonStr);
+    const validated = nutritionResponseSchema.parse(parsed);
 
-  return NextResponse.json(validated);
-} catch (error: any) {
-  console.error('Error in /api/gemini/nutrition:', error);
-  return NextResponse.json(
-    { error: 'Falha ao processar nutrição via IA', details: error.message },
-    { status: 500 }
-  );
-}
+    return NextResponse.json(validated);
+  } catch (error: any) {
+    console.error('Error in /api/gemini/nutrition:', error);
+    return NextResponse.json(
+      {
+        error: 'Falha ao processar nutrição via IA',
+        details: error?.message || String(error),
+        status: error?.status,
+        code: error?.code,
+      },
+      { status: 500 }
+    );
+  }
 }
