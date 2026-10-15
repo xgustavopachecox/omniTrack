@@ -44,11 +44,11 @@ export async function POST(req: NextRequest) {
             options: isCebraspe
               ? [{ key: 'CERTO', text: 'Certo' }, { key: 'ERRADO', text: 'Errado' }]
               : [
-                  { key: 'A', text: 'Apenas durante o dia em caso de ordem judicial.' },
-                  { key: 'B', text: 'Em qualquer horário por determinação judicial.' },
-                  { key: 'C', text: 'Apenas com autorização do proprietário.' },
-                  { key: 'D', text: 'Apenas durante a noite.' },
-                ],
+                { key: 'A', text: 'Apenas durante o dia em caso de ordem judicial.' },
+                { key: 'B', text: 'Em qualquer horário por determinação judicial.' },
+                { key: 'C', text: 'Apenas com autorização do proprietário.' },
+                { key: 'D', text: 'Apenas durante a noite.' },
+              ],
             correct_answer: isCebraspe ? 'ERRADO' : 'A',
             explanation: 'Conforme art. 5º, XI da CF/88, por determinação judicial o ingresso domiciliar SÓ é permitido DURANTE O DIA.',
           },
@@ -60,11 +60,11 @@ export async function POST(req: NextRequest) {
             options: isCebraspe
               ? [{ key: 'CERTO', text: 'Certo' }, { key: 'ERRADO', text: 'Errado' }]
               : [
-                  { key: 'A', text: 'Revogado por conveniência.' },
-                  { key: 'B', text: 'Anulado por ilegalidade.' },
-                  { key: 'C', text: 'Convalidado obrigatoriamente.' },
-                  { key: 'D', text: 'Mantido se houver boa-fé.' },
-                ],
+                { key: 'A', text: 'Revogado por conveniência.' },
+                { key: 'B', text: 'Anulado por ilegalidade.' },
+                { key: 'C', text: 'Convalidado obrigatoriamente.' },
+                { key: 'D', text: 'Mantido se houver boa-fé.' },
+              ],
             correct_answer: isCebraspe ? 'CERTO' : 'B',
             explanation: 'Súmula 473 do STF: a administração pode anular seus próprios atos, quando eivados de vícios que os tornam ilegais.',
           },
@@ -94,7 +94,7 @@ Exigências:
 Formate a resposta rigorosamente em JSON respeitando o schema fornecido.`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-1.5-flash',
       contents: prompt,
       config: {
         responseMimeType: 'application/json',

@@ -163,7 +163,7 @@ export default function WorkoutPage() {
       showToast('Sessão de treino e recordes salvos com sucesso!');
     } catch (err: any) {
       console.error(err);
-      showToast('Erro ao processar treino. Tente novamente.');
+      showToast('Erro ao processar treino. Tente novamente. Verifique se a chave da API está configurada');
     } finally {
       setIsLoading(false);
     }
@@ -472,22 +472,20 @@ export default function WorkoutPage() {
           <div className="flex items-center p-1 bg-slate-950/80 rounded-xl border border-slate-800">
             <button
               onClick={() => setActiveTab('sessions')}
-              className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 ${
-                activeTab === 'sessions'
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 ${activeTab === 'sessions'
                   ? 'bg-gradient-to-r from-cyan-500 to-emerald-500 text-slate-950 shadow-md'
                   : 'text-slate-400 hover:text-white'
-              }`}
+                }`}
             >
               <Layers className="h-4 w-4" />
               Sessões ({sessions.length})
             </button>
             <button
               onClick={() => setActiveTab('prs')}
-              className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 ${
-                activeTab === 'prs'
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 ${activeTab === 'prs'
                   ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 shadow-md'
                   : 'text-slate-400 hover:text-white'
-              }`}
+                }`}
             >
               <Trophy className="h-4 w-4" />
               Vitrine de PRs ({prs.length})
@@ -750,11 +748,10 @@ export default function WorkoutPage() {
                   <button
                     key={group}
                     onClick={() => setSelectedMuscleGroup(group)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition shrink-0 ${
-                      isActive
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition shrink-0 ${isActive
                         ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
                         : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
-                    }`}
+                      }`}
                   >
                     {group}
                   </button>

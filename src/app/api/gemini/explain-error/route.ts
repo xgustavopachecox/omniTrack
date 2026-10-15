@@ -53,33 +53,33 @@ Instruções:
 
 Formate a resposta em JSON respeitando o schema.`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+    const response = await ai.gemini - 1.5 - flashs.generateContent({
+      gemini- 1.5 - flash: 'gemini-1.5-flash',
       contents: prompt,
       config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: 'OBJECT',
-          properties: {
-            ai_clarification: { type: 'STRING' },
-            suggested_error_reason: { type: 'STRING' },
-            key_legal_point: { type: 'STRING' },
-          },
-          required: ['ai_clarification'],
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'OBJECT',
+        properties: {
+          ai_clarification: { type: 'STRING' },
+          suggested_error_reason: { type: 'STRING' },
+          key_legal_point: { type: 'STRING' },
         },
+        required: ['ai_clarification'],
       },
+    },
     });
 
-    const responseText = response.text || '';
-    const parsedJson = JSON.parse(responseText);
-    const validatedData = explainErrorSchema.parse(parsedJson);
+  const responseText = response.text || '';
+  const parsedJson = JSON.parse(responseText);
+  const validatedData = explainErrorSchema.parse(parsedJson);
 
-    return NextResponse.json(validatedData);
-  } catch (error: any) {
-    console.error('Error generating AI error clarification:', error);
-    return NextResponse.json(
-      { error: 'Falha ao gerar explicação da IA.', details: error?.message },
-      { status: 500 }
-    );
-  }
+  return NextResponse.json(validatedData);
+} catch (error: any) {
+  console.error('Error generating AI error clarification:', error);
+  return NextResponse.json(
+    { error: 'Falha ao gerar explicação da IA.', details: error?.message },
+    { status: 500 }
+  );
+}
 }

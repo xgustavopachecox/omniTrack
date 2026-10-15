@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
       const formData = await req.formData();
       const text = formData.get('text');
       if (typeof text === 'string') textInput = text;
-      
+
       const reqMode = formData.get('mode');
       if (reqMode && typeof reqMode === 'string' && ['doubt', 'mnemonic', 'question'].includes(reqMode)) {
         mode = reqMode as any;
@@ -157,25 +157,25 @@ Analise a solicitação do candidato para o tópico "${topicName}" e forneça um
 }`,
     });
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+    const response = await ai.gemini - 1.5 - flashs.generateContent({
+      gemini- 1.5 - flash: 'gemini-1.5-flash',
       contents,
       config: {
-        responseMimeType: 'application/json',
-      },
+      responseMimeType: 'application/json',
+    },
     });
 
-    const responseText = response.text || '';
-    const cleanedJsonStr = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-    const parsed = JSON.parse(cleanedJsonStr);
-    const validated = studyResponseSchema.parse(parsed);
+  const responseText = response.text || '';
+  const cleanedJsonStr = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+  const parsed = JSON.parse(cleanedJsonStr);
+  const validated = studyResponseSchema.parse(parsed);
 
-    return NextResponse.json(validated);
-  } catch (error: any) {
-    console.error('Error in /api/gemini/study:', error);
-    return NextResponse.json(
-      { error: 'Falha ao processar auxílio de estudos via Gemini', details: error.message },
-      { status: 500 }
-    );
-  }
+  return NextResponse.json(validated);
+} catch (error: any) {
+  console.error('Error in /api/gemini/study:', error);
+  return NextResponse.json(
+    { error: 'Falha ao processar auxílio de estudos via Gemini', details: error.message },
+    { status: 500 }
+  );
+}
 }
