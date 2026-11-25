@@ -3,8 +3,20 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { OmniStore } from '@/lib/store';
-import { Profile, NutritionLog, WorkoutSession, BodyMetric, WaterLog, SecondBrainNote } from '@/lib/types';
+import {
+  Profile,
+  NutritionLog,
+  WorkoutSession,
+  BodyMetric,
+  WaterLog,
+  SecondBrainNote,
+  Contest,
+  ContestSubject,
+  FinancialTransaction,
+  FinancialGoal,
+} from '@/lib/types';
 import { calculateMacroPercentages, calculateWeeklyStreak } from '@/lib/consistency';
+import { formatBRL } from '@/lib/finance';
 import {
   Flame,
   Droplets,
@@ -20,7 +32,9 @@ import {
   AlertCircle,
   Apple,
   Zap,
-  Activity,
+  GraduationCap,
+  Wallet,
+  PiggyBank,
 } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -30,45 +44,73 @@ export default function DashboardPage() {
   const [waterLogs, setWaterLogs] = useState<WaterLog[]>([]);
   const [bodyMetrics, setBodyMetrics] = useState<BodyMetric[]>([]);
   const [notes, setNotes] = useState<SecondBrainNote[]>([]);
+  const [contests, setContests] = useState<Contest[]>([]);
+  const [contestSubjects, setContestSubjects] = useState<ContestSubject[]>([]);
+  const [financialTransactions, setFinancialTransactions] = useState<FinancialTransaction[]>([]);
+  const [financialGoals, setFinancialGoals] = useState<FinancialGoal[]>([]);
   const [waterAdding, setWaterAdding] = useState<boolean>(false);
 
-  const loadData = async () => {
-    const [p, n, w, wt, b, nt] = await Promise.all([
-      OmniStore.getProfile(),
-      OmniStore.getNutritionLogs(),
-      OmniStore.getWorkoutSessions(),
-      OmniStore.getWaterLogs(),
-      OmniStore.getBodyMetrics(),
-      OmniStore.getNotes(),
-    ]);
-    setProfile(p);
-    setNutritionLogs(n);
-    setWorkoutSessions(w);
-    setWaterLogs(wt);
-    setBodyMetrics(b);
-    setNotes(nt);
-  };
+  const loadData = useCallback(async () => {
+    try {
+      const [p, n, w, wt, b, nt, cList, csList, fTx, fGoals] = await Promise.all([
+        OmniStore.getProfile(),
+        OmniStore.getNutritionLogs(),
+        OmniStore.getWorkoutSessions(),
+        OmniStore.getWaterLogs(),
+        OmniStore.getBodyMetrics(),
+        OmniStore.getNotes(),
+        OmniStore.getContests(),
+        OmniStore.getContestSubjects(),
+        OmniStore.getFinancialTransactions(),
+        OmniStore.getFinancialGoals(),
+      ]);
+      setProfile(p);
+      setNutritionLogs(n);
+      setWorkoutSessions(w);
+      setWaterLogs(wt);
+      setBodyMetrics(b);
+      setNotes(nt);
+      setContests(cList);
+      setContestSubjects(csList);
+      setFinancialTransactions(fTx);
+      setFinancialGoals(fGoals);
+    } catch (err) {
+      console.error('Erro ao carregar dados do Dashboard:', err);
+    }
+  }, []);
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [loadData]);
 
-  const handleAddWater = useCallback(async (amount: number) => {
-    setWaterAdding(true);
-    await OmniStore.addWaterLog(amount);
-    await loadData();
-    setWaterAdding(false);
-  }, []);
+  const handleAddWater = useCallback(
+    async (amount: number) => {
+      setWaterAdding(true);
+      try {
+        await OmniStore.addWaterLog(amount);
+        await loadData();
+      } finally {
+        setWaterAdding(false);
+      }
+    },
+    [loadData]
+  );
 
-  const handleSubtractWater = useCallback(async (amount: number) => {
-    setWaterAdding(true);
-    await OmniStore.subtractWaterLog(amount);
-    await loadData();
-    setWaterAdding(false);
-  }, []);
+  const handleSubtractWater = useCallback(
+    async (amount: number) => {
+      setWaterAdding(true);
+      try {
+        await OmniStore.subtractWaterLog(amount);
+        await loadData();
+      } finally {
+        setWaterAdding(false);
+      }
+    },
+    [loadData]
+  );
 
-  // Calculations for Today's Stats (Memoized for high performance)
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const currentMonthPrefix = useMemo(() => todayStr.slice(0, 7), [todayStr]);
 
   const {
     totalCalories,
@@ -92,14 +134,22 @@ export default function DashboardPage() {
     prevWeight,
     todayMacros,
     weeklyStreakData,
+    activeContest,
+    activeContestPct,
+    activeContestCompletedTopics,
+    activeContestTotalTopics,
+    monthIncome,
+    monthExpense,
+    monthBalance,
+    totalCofrinhos,
   } = useMemo(() => {
     const todayNutrition = nutritionLogs.filter(
-      (l) => l.logged_at.split('T')[0] === todayStr
+      (l) => (l.log_date || l.logged_at.split('T')[0]) === todayStr
     );
-    const totCal = todayNutrition.reduce((acc, curr) => acc + curr.calories, 0);
-    const totProt = todayNutrition.reduce((acc, curr) => acc + Number(curr.protein_g), 0);
-    const totCarbs = todayNutrition.reduce((acc, curr) => acc + Number(curr.carbs_g), 0);
-    const totFats = todayNutrition.reduce((acc, curr) => acc + Number(curr.fats_g), 0);
+    const totCal = todayNutrition.reduce((acc, curr) => acc + Number(curr.calories || 0), 0);
+    const totProt = todayNutrition.reduce((acc, curr) => acc + Number(curr.protein_g || 0), 0);
+    const totCarbs = todayNutrition.reduce((acc, curr) => acc + Number(curr.carbs_g || 0), 0);
+    const totFats = todayNutrition.reduce((acc, curr) => acc + Number(curr.fats_g || 0), 0);
 
     const tCal = profile?.daily_calorie_target || 2500;
     const tProt = profile?.daily_protein_target || 160;
@@ -114,7 +164,7 @@ export default function DashboardPage() {
 
     const waterSum = waterLogs
       .filter((w) => w.logged_at.split('T')[0] === todayStr)
-      .reduce((acc, curr) => acc + curr.amount_ml, 0);
+      .reduce((acc, curr) => acc + Number(curr.amount_ml || 0), 0);
     const waterPct = Math.min(100, Math.round((waterSum / tWater) * 100));
 
     const wToday = workoutSessions.some(
@@ -126,7 +176,35 @@ export default function DashboardPage() {
     const pWeight = bodyMetrics.length > 1 ? bodyMetrics[bodyMetrics.length - 2] : null;
 
     const tMacros = calculateMacroPercentages(totProt, totCarbs, totFats);
-    const wStreak = calculateWeeklyStreak(workoutSessions, profile?.weekly_workout_target || 4);
+    const wStreak = calculateWeeklyStreak(
+      workoutSessions,
+      profile?.weekly_workout_target || 4
+    );
+
+    // Active Contest Stats
+    const actContest = contests.find((c) => c.is_active) || contests[0] || null;
+    const actSubjects = actContest
+      ? contestSubjects.filter((s) => s.contest_id === actContest.id)
+      : [];
+    const compTopics = actSubjects.filter((s) => s.is_completed).length;
+    const totTopics = actSubjects.length;
+    const actPct = totTopics > 0 ? Math.round((compTopics / totTopics) * 100) : 0;
+
+    // Current Month Finance Stats
+    const monthTxs = financialTransactions.filter((t) =>
+      t.transaction_date.startsWith(currentMonthPrefix)
+    );
+    const mInc = monthTxs
+      .filter((t) => t.type === 'income')
+      .reduce((acc, t) => acc + Number(t.amount || 0), 0);
+    const mExp = monthTxs
+      .filter((t) => t.type === 'expense')
+      .reduce((acc, t) => acc + Number(t.amount || 0), 0);
+    const mBal = mInc - mExp;
+    const totCof = financialGoals.reduce(
+      (acc, g) => acc + Number(g.current_amount || 0),
+      0
+    );
 
     return {
       totalCalories: totCal,
@@ -150,8 +228,29 @@ export default function DashboardPage() {
       prevWeight: pWeight,
       todayMacros: tMacros,
       weeklyStreakData: wStreak,
+      activeContest: actContest,
+      activeContestPct: actPct,
+      activeContestCompletedTopics: compTopics,
+      activeContestTotalTopics: totTopics,
+      monthIncome: mInc,
+      monthExpense: mExp,
+      monthBalance: mBal,
+      totalCofrinhos: totCof,
     };
-  }, [nutritionLogs, waterLogs, workoutSessions, bodyMetrics, notes, profile, todayStr]);
+  }, [
+    nutritionLogs,
+    waterLogs,
+    workoutSessions,
+    bodyMetrics,
+    notes,
+    contests,
+    contestSubjects,
+    financialTransactions,
+    financialGoals,
+    profile,
+    todayStr,
+    currentMonthPrefix,
+  ]);
 
   return (
     <div className="space-y-8 animate-fadeIn">
@@ -168,11 +267,11 @@ export default function DashboardPage() {
             Resumo do Seu Dia
           </h1>
           <p className="text-sm text-slate-400 mt-1">
-            Visão consolidada de nutrição, hidratação, sobrecarga de treino e notas ativas.
+            Visão consolidada de nutrição, hidratação, treino, concursos, finanças e notas ativas.
           </p>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {/* Weekly Streak Badge */}
           <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-2xl bg-slate-950/90 border border-amber-500/40 shadow-lg shadow-amber-500/10">
             <div className="p-1.5 rounded-xl bg-amber-500/20 text-amber-400">
@@ -205,7 +304,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Primary Grid: Calories & Macros Progress */}
+      {/* Primary Grid: Calories & Macros Progress + Water */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Calories Progress Card */}
         <div className="glass-card p-6 rounded-2xl relative overflow-hidden flex flex-col justify-between">
@@ -234,7 +333,6 @@ export default function DashboardPage() {
                 <span className="text-slate-400 text-sm ml-1">/ {targetCal} kcal</span>
               </div>
 
-              {/* Energy Surplus / Deficit Badge */}
               <div className="pt-0.5">
                 {totalCalories > targetCal ? (
                   <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-xs font-extrabold">
@@ -281,10 +379,11 @@ export default function DashboardPage() {
           </div>
 
           <div className="space-y-4">
-            {/* Protein */}
             <div className="space-y-1">
               <div className="flex justify-between text-xs font-medium">
-                <span className="text-cyan-300">Proteínas ({totalProtein.toFixed(0)}g / {targetProt}g)</span>
+                <span className="text-cyan-300">
+                  Proteínas ({totalProtein.toFixed(0)}g / {targetProt}g)
+                </span>
                 <span className="text-cyan-400 font-bold">{protPercentage}%</span>
               </div>
               <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
@@ -295,10 +394,11 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* Carbs */}
             <div className="space-y-1">
               <div className="flex justify-between text-xs font-medium">
-                <span className="text-emerald-300">Carboidratos ({totalCarbs.toFixed(0)}g / {targetCarbs}g)</span>
+                <span className="text-emerald-300">
+                  Carboidratos ({totalCarbs.toFixed(0)}g / {targetCarbs}g)
+                </span>
                 <span className="text-emerald-400 font-bold">{carbsPercentage}%</span>
               </div>
               <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
@@ -309,10 +409,11 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* Fats */}
             <div className="space-y-1">
               <div className="flex justify-between text-xs font-medium">
-                <span className="text-indigo-300">Gorduras ({totalFats.toFixed(0)}g / {targetFats}g)</span>
+                <span className="text-indigo-300">
+                  Gorduras ({totalFats.toFixed(0)}g / {targetFats}g)
+                </span>
                 <span className="text-indigo-400 font-bold">{fatsPercentage}%</span>
               </div>
               <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
@@ -324,16 +425,29 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* 3-Color Segmented Caloric Macro Bar & Badge */}
           <div className="mt-4 pt-3 border-t border-slate-800 space-y-1.5">
             <div className="flex items-center justify-between text-[11px] font-bold">
               <span className="text-slate-400">Distribuição % de Kcal:</span>
-              <span className="text-purple-300">P:{todayMacros.pPct}% | C:{todayMacros.cPct}% | G:{todayMacros.fPct}%</span>
+              <span className="text-purple-300">
+                P:{todayMacros.pPct}% | C:{todayMacros.cPct}% | G:{todayMacros.fPct}%
+              </span>
             </div>
             <div className="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden flex border border-slate-800">
-              <div style={{ width: `${todayMacros.cPct}%` }} className="h-full bg-cyan-400 transition-all" title={`Carboidratos: ${todayMacros.cPct}%`} />
-              <div style={{ width: `${todayMacros.pPct}%` }} className="h-full bg-purple-500 transition-all" title={`Proteínas: ${todayMacros.pPct}%`} />
-              <div style={{ width: `${todayMacros.fPct}%` }} className="h-full bg-amber-400 transition-all" title={`Gorduras: ${todayMacros.fPct}%`} />
+              <div
+                style={{ width: `${todayMacros.cPct}%` }}
+                className="h-full bg-cyan-400 transition-all"
+                title={`Carboidratos: ${todayMacros.cPct}%`}
+              />
+              <div
+                style={{ width: `${todayMacros.pPct}%` }}
+                className="h-full bg-purple-500 transition-all"
+                title={`Proteínas: ${todayMacros.pPct}%`}
+              />
+              <div
+                style={{ width: `${todayMacros.fPct}%` }}
+                className="h-full bg-amber-400 transition-all"
+                title={`Gorduras: ${todayMacros.fPct}%`}
+              />
             </div>
           </div>
         </div>
@@ -366,7 +480,6 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Quick Water Action Buttons (Subtract & Add) */}
           <div className="grid grid-cols-4 gap-1.5">
             <button
               onClick={() => handleSubtractWater(250)}
@@ -408,8 +521,114 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Secondary Row: Workout Status & Quick Widgets */}
+      {/* Secondary Row: Financeiro + Concursos & TAF + Workout Status */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Financeiro Quick Summary Card */}
+        <div className="glass-card p-6 rounded-2xl flex flex-col justify-between border-l-4 border-l-emerald-500">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400">
+                <Wallet className="h-5 w-5" />
+              </div>
+              <h3 className="font-bold text-slate-200 text-base">Balanço Financeiro (Mês)</h3>
+            </div>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+              {currentMonthPrefix}
+            </span>
+          </div>
+
+          <div className="my-2 space-y-2">
+            <div>
+              <span className="text-[11px] text-slate-400 block">Saldo Líquido do Mês</span>
+              <span
+                className={`text-2xl font-extrabold ${
+                  monthBalance >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                }`}
+              >
+                {formatBRL(monthBalance)}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+              <div className="p-2 rounded-xl bg-slate-950/70 border border-slate-800">
+                <span className="text-[10px] text-slate-400 block">Receitas</span>
+                <span className="font-bold text-emerald-400">{formatBRL(monthIncome)}</span>
+              </div>
+              <div className="p-2 rounded-xl bg-slate-950/70 border border-slate-800">
+                <span className="text-[10px] text-slate-400 block">Despesas</span>
+                <span className="font-bold text-rose-400">{formatBRL(monthExpense)}</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between text-xs pt-1 text-slate-400">
+              <span className="flex items-center gap-1">
+                <PiggyBank className="h-3.5 w-3.5 text-violet-400" />
+                Total nos Cofrinhos:
+              </span>
+              <strong className="text-violet-300">{formatBRL(totalCofrinhos)}</strong>
+            </div>
+          </div>
+
+          <Link
+            href="/financeiro"
+            className="w-full py-2.5 mt-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center justify-center gap-2 transition"
+          >
+            <span>Abrir Central Financeira</span>
+            <ArrowRight className="h-4 w-4" />
+          </Link>
+        </div>
+
+        {/* Concursos & Edital Summary Card */}
+        <div className="glass-card p-6 rounded-2xl flex flex-col justify-between border-l-4 border-l-indigo-500">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-400">
+                <GraduationCap className="h-5 w-5" />
+              </div>
+              <h3 className="font-bold text-slate-200 text-base">Concurso em Foco</h3>
+            </div>
+            {activeContest && (
+              <span className="px-2.5 py-0.5 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 text-[10px] font-bold">
+                {activeContest.institution || 'Ativo'}
+              </span>
+            )}
+          </div>
+
+          {activeContest ? (
+            <div className="my-3 space-y-2.5">
+              <h4 className="text-sm font-extrabold text-white truncate">
+                {activeContest.title}
+              </h4>
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs">
+                  <span className="text-slate-400">
+                    Edital Verticalizado ({activeContestCompletedTopics}/{activeContestTotalTopics})
+                  </span>
+                  <span className="font-bold text-cyan-400">{activeContestPct}%</span>
+                </div>
+                <div className="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-indigo-500 to-cyan-400 rounded-full transition-all duration-500"
+                    style={{ width: `${activeContestPct}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-slate-400 my-4">
+              Nenhum concurso ativo cadastrado. Importe seu edital em PDF com IA ou crie manualmente.
+            </p>
+          )}
+
+          <Link
+            href="/contests"
+            className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center justify-center gap-2 transition"
+          >
+            <span>Ir para Concursos & TAF</span>
+            <ArrowRight className="h-4 w-4" />
+          </Link>
+        </div>
+
         {/* Workout Status Today Card */}
         <div className="glass-card p-6 rounded-2xl flex flex-col justify-between border-l-4 border-l-cyan-500">
           <div className="flex items-center justify-between">
@@ -452,7 +671,10 @@ export default function DashboardPage() {
             <ArrowRight className="h-4 w-4" />
           </Link>
         </div>
+      </div>
 
+      {/* Tertiary Row: Second Brain & Latest Body Weight */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Quick Widget: Latest Note from Second Brain */}
         <div className="glass-card p-6 rounded-2xl flex flex-col justify-between">
           <div className="flex items-center justify-between mb-2">
@@ -486,7 +708,7 @@ export default function DashboardPage() {
             href="/second-brain"
             className="text-xs text-violet-400 hover:text-violet-300 font-semibold flex items-center gap-1 mt-2"
           >
-            <span>Ver todas as notas</span>
+            <span>Ver todas as notas ({notes.length})</span>
             <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         </div>
@@ -501,14 +723,17 @@ export default function DashboardPage() {
               <h3 className="font-bold text-slate-200 text-base">Última Pesagem</h3>
             </div>
             <span className="text-[10px] text-slate-400">
-              {latestWeight ? new Date(latestWeight.logged_at).toLocaleDateString('pt-BR') : '-'}
+              {latestWeight
+                ? new Date(latestWeight.logged_at).toLocaleDateString('pt-BR')
+                : '-'}
             </span>
           </div>
 
           {latestWeight ? (
             <div className="my-2 flex items-baseline gap-2">
               <span className="text-3xl font-extrabold text-white">
-                {latestWeight.weight_kg} <span className="text-sm font-normal text-slate-400">kg</span>
+                {latestWeight.weight_kg}{' '}
+                <span className="text-sm font-normal text-slate-400">kg</span>
               </span>
               {prevWeight && (
                 <span className="text-xs text-emerald-400 font-medium flex items-center">
@@ -525,7 +750,7 @@ export default function DashboardPage() {
             href="/physical"
             className="text-xs text-emerald-400 hover:text-emerald-300 font-semibold flex items-center gap-1 mt-2"
           >
-            <span>Ver evolução física</span>
+            <span>Ver evolução física & IA Coach</span>
             <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         </div>

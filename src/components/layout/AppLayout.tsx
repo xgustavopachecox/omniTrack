@@ -2,7 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutDashboard,
   Utensils,
@@ -18,17 +18,18 @@ import { GamificationHeader } from './GamificationHeader';
 import { LevelUpModal } from './LevelUpModal';
 
 const navItems = [
-  { label: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { label: 'Nutrição', href: '/nutrition', icon: Utensils },
-  { label: 'Treino', href: '/workout', icon: Dumbbell },
-  { label: 'Concursos & TAF', href: '/contests', icon: GraduationCap },
-  { label: 'Financeiro', href: '/financeiro', icon: Wallet },
-  { label: 'Físico', href: '/physical', icon: LineChart },
-  { label: 'Segundo Cérebro', href: '/second-brain', icon: Brain },
+  { label: 'Dashboard', mobileLabel: 'Início', href: '/', icon: LayoutDashboard },
+  { label: 'Nutrição', mobileLabel: 'Nutrição', href: '/nutrition', icon: Utensils },
+  { label: 'Treino', mobileLabel: 'Treino', href: '/workout', icon: Dumbbell },
+  { label: 'Concursos & TAF', mobileLabel: 'Concursos', href: '/contests', icon: GraduationCap },
+  { label: 'Financeiro', mobileLabel: 'Finanças', href: '/financeiro', icon: Wallet },
+  { label: 'Físico', mobileLabel: 'Físico', href: '/physical', icon: LineChart },
+  { label: 'Segundo Cérebro', mobileLabel: 'Notas', href: '/second-brain', icon: Brain },
 ];
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
 
   const isAuthRoute =
     pathname === '/login' ||
@@ -41,7 +42,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="min-h-screen bg-[#090d16] text-gray-100 flex flex-col font-sans selection:bg-cyan-500 selection:text-black">
+    <div className="min-h-screen bg-[#090d16] text-gray-100 flex flex-col font-sans selection:bg-cyan-500 selection:text-black overflow-x-hidden">
       {/* Level Up & Badge Unlock Modal Global */}
       <LevelUpModal />
 
@@ -95,36 +96,39 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             })}
           </nav>
 
-          {/* User Profile Info Card */}
+          {/* System Status Card */}
           <div className="mt-auto p-3.5 rounded-xl bg-slate-800/40 border border-slate-700/50 flex items-center gap-3">
-            <div className="h-9 w-9 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-white text-sm">
+            <div className="h-9 w-9 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-white text-sm shrink-0">
               <UserCheck className="h-4 w-4" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-white truncate">Atleta High-Perf</p>
+              <p className="text-xs font-semibold text-white truncate">OmniTrack Cloud</p>
               <p className="text-[10px] text-emerald-400 font-medium truncate flex items-center gap-1">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 inline-block"></span>
-                2.500 kcal / 160g P
+                Sincronização Ativa
               </p>
             </div>
           </div>
         </aside>
 
         {/* Main Section */}
-        <div className="flex-1 md:ml-64 flex flex-col min-h-screen">
+        <div className="flex-1 md:ml-64 flex flex-col min-h-screen min-w-0">
           {/* Top Gamification Header */}
           <GamificationHeader />
 
           {/* Main Content Viewport */}
-          <main className="flex-1 pb-24 md:pb-8 px-4 py-6 md:px-8 max-w-7xl mx-auto w-full">
+          <main className="flex-1 pb-28 md:pb-8 px-3.5 sm:px-4 py-5 md:px-8 max-w-7xl mx-auto w-full min-w-0">
             {children}
           </main>
         </div>
       </div>
 
-      {/* Mobile Bottom Navigation Bar */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-900/90 backdrop-blur-xl border-t border-slate-800/80 px-2 py-1.5 pb-safe shadow-2xl">
-        <div className="flex items-center justify-around h-14">
+      {/* Mobile Bottom Navigation Bar - High Priority Z-Index & Touch Target Fix */}
+      <nav
+        aria-label="Navegação Principal Mobile"
+        className="md:hidden fixed bottom-0 left-0 right-0 z-50 pointer-events-auto bg-slate-950/95 backdrop-blur-xl border-t border-slate-800/90 px-1 py-1 pb-safe shadow-2xl"
+      >
+        <div className="flex items-center justify-between h-14 max-w-lg mx-auto overflow-x-auto scrollbar-none">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive =
@@ -134,17 +138,31 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex flex-col items-center justify-center w-full h-full px-1 py-1 rounded-lg transition-all ${
-                  isActive ? 'text-cyan-400 font-medium' : 'text-slate-400 hover:text-slate-200'
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (pathname !== item.href) {
+                    router.push(item.href);
+                  }
+                }}
+                className={`pointer-events-auto touch-manipulation select-none flex flex-col items-center justify-center flex-1 min-w-[48px] h-full px-1 py-1 rounded-xl transition-all active:scale-95 ${
+                  isActive
+                    ? 'text-cyan-400 font-bold bg-cyan-500/10'
+                    : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <div className="relative">
-                  <Icon className={`h-5 w-5 transition-transform ${isActive ? 'scale-110 text-cyan-400' : ''}`} />
+                <div className="relative pointer-events-none">
+                  <Icon
+                    className={`h-5 w-5 transition-transform ${
+                      isActive ? 'scale-110 text-cyan-400' : ''
+                    }`}
+                  />
                   {isActive && (
-                    <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-cyan-400 animate-ping" />
+                    <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-cyan-400 animate-ping pointer-events-none" />
                   )}
                 </div>
-                <span className="text-[10px] mt-1 truncate max-w-[64px]">{item.label}</span>
+                <span className="pointer-events-none text-[10px] leading-tight mt-1 truncate max-w-[56px]">
+                  {item.mobileLabel}
+                </span>
               </Link>
             );
           })}
@@ -153,4 +171,3 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
-

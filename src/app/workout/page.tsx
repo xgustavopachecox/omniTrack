@@ -99,14 +99,18 @@ export default function WorkoutPage() {
   const [prDate, setPrDate] = useState<string>(new Date().toISOString().split('T')[0]);
 
   const loadData = async () => {
-    const [sList, prList] = await Promise.all([
-      OmniStore.getWorkoutSessions(),
-      OmniStore.getUserPRs(),
-    ]);
-    setSessions(sList);
-    setPrs(prList);
-    if (sList.length > 0 && Object.keys(expandedSessionIds).length === 0) {
-      setExpandedSessionIds({ [sList[0].id]: true });
+    try {
+      const [sList, prList] = await Promise.all([
+        OmniStore.getWorkoutSessions(),
+        OmniStore.getUserPRs(),
+      ]);
+      setSessions(sList);
+      setPrs(prList);
+      if (sList.length > 0 && Object.keys(expandedSessionIds).length === 0) {
+        setExpandedSessionIds({ [sList[0].id]: true });
+      }
+    } catch (err) {
+      console.error('Erro ao carregar dados de treino:', err);
     }
   };
 
@@ -777,7 +781,7 @@ export default function WorkoutPage() {
             <div className="glass-card p-10 rounded-2xl text-center text-slate-500 space-y-2">
               <Trophy className="h-10 w-10 mx-auto text-slate-600 opacity-40" />
               <p className="text-sm font-medium">Nenhum recorde encontrado para este filtro.</p>
-              <p className="text-xs">Clique em "+ Novo PR Manual" para cadastrar um recorde diretamente.</p>
+              <p className="text-xs">Clique em &quot;+ Novo PR Manual&quot; para cadastrar um recorde diretamente.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">

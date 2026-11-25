@@ -25,8 +25,9 @@ import {
 } from './types';
 import { supabase, isSupabaseConfigured } from './supabase/client';
 import { generateUUID } from './finance';
+import { processXpGain, triggerGamificationEvent } from './gamification';
 
-const DEMO_USER_ID = 'demo-user-omnitrack';
+const DEMO_USER_ID = '00000000-0000-4000-8000-000000000000';
 
 const defaultProfile: Profile = {
   id: DEMO_USER_ID,
@@ -35,9 +36,10 @@ const defaultProfile: Profile = {
   daily_carbs_target: 280,
   daily_fats_target: 70,
   daily_water_target: 3000,
+  weekly_workout_target: 4,
   current_level: 1,
   current_xp: 0,
-  rank_title: 'Aspirante / Recruta',
+  rank_title: 'Iniciante / Recruta',
   streak_days: 0,
   created_at: new Date().toISOString(),
 };
@@ -54,6 +56,13 @@ const defaultStudySessions: StudySession[] = [];
 const defaultContestTafRequirements: ContestTafRequirement[] = [];
 const defaultTafBenchmarks: TafBenchmark[] = [];
 const defaultPhysiqueAssessments: PhysiqueAssessment[] = [];
+const defaultMockExams: MockExam[] = [];
+const defaultErrorNotebook: ErrorNotebookItem[] = [];
+const defaultScheduledReviews: ScheduledReview[] = [];
+const defaultFinancialTransactions: FinancialTransaction[] = [];
+const defaultFinancialGoals: FinancialGoal[] = [];
+const defaultFinancialGoalContributions: FinancialGoalContribution[] = [];
+const defaultFinancialVisionPlans: FinancialVisionPlan[] = [];
 
 export class OmniStore {
   private static get<T>(key: string, defaultValue: T): T {
@@ -75,67 +84,119 @@ export class OmniStore {
     }
   }
 
+  private static async getAuthenticatedUserId(): Promise<string | null> {
+    if (!isSupabaseConfigured || !supabase) return null;
+    try {
+      const { data } = await supabase.auth.getUser();
+      return data?.user?.id || null;
+    } catch {
+      return null;
+    }
+  }
+
   // Profile
   static async getProfile(): Promise<Profile> {
     if (isSupabaseConfigured && supabase) {
-      const { data } = await supabase.from('profiles').select('*').single();
-      if (data) return data as Profile;
+      try {
+        const authUserId = await this.getAuthenticatedUserId();
+        if (authUserId) {
+          const { data, error } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', authUserId)
+            .maybeSingle();
+
+          if (!error && data) {
+            const prof = data as Profile;
+            this.set('profile', prof);
+            return prof;
+          }
+
+          if (!error && !data) {
+            const initialProf: Profile = {
+              ...defaultProfile,
+              id: authUserId,
+              created_at: new Date().toISOString(),
+            };
+            await supabase.from('profiles').upsert(initialProf);
+            this.set('profile', initialProf);
+            return initialProf;
+          }
+        }
+      } catch (err) {
+        console.error('Erro ao buscar profile no Supabase:', err);
+      }
     }
     return this.get('profile', defaultProfile);
   }
 
   static async updateProfile(profile: Partial<Profile>): Promise<Profile> {
     const current = await this.getProfile();
-    const updated = { ...current, ...profile };
-    if (isSupabaseConfigured && supabase) {
+    const authUserId = await this.getAuthenticatedUserId();
+    const updated: Profile = {
+      ...current,
+      ...profile,
+      id: authUserId || current.id || DEMO_USER_ID,
+    };
+    if (isSupabaseConfigured && supabase && authUserId) {
       await supabase.from('profiles').upsert(updated);
     }
     this.set('profile', updated);
     return updated;
   }
 
-  static async addXp(amount: number, reason?: string): Promise<Profile> {
+  static async addXp(amount: number, reason: string = 'Atividade Concluída'): Promise<Profile> {
     const current = await this.getProfile();
-    const newXp = (current.current_xp || 0) + amount;
-    const xpPerLevel = 500;
-    const newLevel = Math.floor(newXp / xpPerLevel) + 1;
-    let rank = current.rank_title || 'Aspirante / Recruta';
-
-    if (newLevel >= 10) rank = 'Mestre da Disciplina';
-    else if (newLevel >= 7) rank = 'Comandante de Elite';
-    else if (newLevel >= 4) rank = 'Guerreiro Avançado';
-    else if (newLevel >= 2) rank = 'Combatente Disciplinado';
-
-    return this.updateProfile({
-      current_xp: newXp,
-      current_level: newLevel,
-      rank_title: rank,
-    });
+    const { updatedProfile, reward } = processXpGain(current, amount, reason);
+    const saved = await this.updateProfile(updatedProfile);
+    triggerGamificationEvent(reward);
+    return saved;
   }
 
   // Nutrition
   static async getNutritionLogs(): Promise<NutritionLog[]> {
     if (isSupabaseConfigured && supabase) {
-      const { data } = await supabase.from('nutrition_logs').select('*').order('logged_at', { ascending: false });
-      if (data && data.length > 0) return data as NutritionLog[];
+      try {
+        const { data, error } = await supabase
+          .from('nutrition_logs')
+          .select('*')
+          .order('logged_at', { ascending: false });
+        if (!error && data) {
+          this.set('nutrition_logs', data as NutritionLog[]);
+          return data as NutritionLog[];
+        }
+      } catch (err) {
+        console.error('Erro ao buscar nutrition_logs:', err);
+      }
     }
     return this.get('nutrition_logs', defaultNutritionLogs);
   }
 
-  static async addNutritionLog(log: Omit<NutritionLog, 'id' | 'user_id' | 'logged_at'>): Promise<NutritionLog> {
+  static async addNutritionLog(
+    log: Omit<NutritionLog, 'id' | 'user_id' | 'logged_at'>
+  ): Promise<NutritionLog> {
     const nowIso = new Date().toISOString();
+    const authUserId = await this.getAuthenticatedUserId();
     const newLog: NutritionLog = {
       ...log,
-      id: `n_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
-      user_id: DEMO_USER_ID,
+      id: generateUUID(),
+      user_id: authUserId || DEMO_USER_ID,
       meal_type: log.meal_type || 'Refeição',
       log_date: log.log_date || nowIso.split('T')[0],
       logged_at: nowIso,
     };
 
-    if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.from('nutrition_logs').insert(newLog).select().single();
-      if (data && !error) return data as NutritionLog;
+    if (isSupabaseConfigured && supabase && authUserId) {
+      const { data, error } = await supabase
+        .from('nutrition_logs')
+        .insert(newLog)
+        .select()
+        .single();
+      if (data && !error) {
+        const current = this.get('nutrition_logs', defaultNutritionLogs);
+        this.set('nutrition_logs', [data as NutritionLog, ...current]);
+        return data as NutritionLog;
+      }
     }
 
     const current = await this.getNutritionLogs();
@@ -144,7 +205,10 @@ export class OmniStore {
     return newLog;
   }
 
-  static async updateNutritionLog(id: string, logData: Partial<NutritionLog>): Promise<NutritionLog> {
+  static async updateNutritionLog(
+    id: string,
+    logData: Partial<NutritionLog>
+  ): Promise<NutritionLog> {
     const current = await this.getNutritionLogs();
     const existing = current.find((l) => l.id === id);
     if (!existing) throw new Error('Nutrition log not found');
@@ -164,7 +228,7 @@ export class OmniStore {
     if (isSupabaseConfigured && supabase) {
       await supabase.from('nutrition_logs').delete().eq('id', id);
     }
-    const current = await this.getNutritionLogs();
+    const current = this.get('nutrition_logs', defaultNutritionLogs);
     const updated = current.filter((l) => l.id !== id);
     this.set('nutrition_logs', updated);
   }
@@ -172,19 +236,36 @@ export class OmniStore {
   // Workout Sessions & PRs
   static async getWorkoutSessions(): Promise<WorkoutSession[]> {
     if (isSupabaseConfigured && supabase) {
-      const { data: sessionsData } = await supabase
-        .from('workout_sessions')
-        .select('*, exercises:workout_session_exercises(*)')
-        .order('created_at', { ascending: false });
-      if (sessionsData && sessionsData.length > 0) return sessionsData as WorkoutSession[];
+      try {
+        const { data: sessionsData, error } = await supabase
+          .from('workout_sessions')
+          .select('*, exercises:workout_session_exercises(*)')
+          .order('created_at', { ascending: false });
+        if (!error && sessionsData) {
+          this.set('workout_sessions', sessionsData as WorkoutSession[]);
+          return sessionsData as WorkoutSession[];
+        }
+      } catch (err) {
+        console.error('Erro ao buscar workout_sessions:', err);
+      }
     }
     return this.get('workout_sessions', defaultSessions);
   }
 
   static async getUserPRs(): Promise<UserPR[]> {
     if (isSupabaseConfigured && supabase) {
-      const { data } = await supabase.from('user_prs').select('*').order('weight_kg', { ascending: false });
-      if (data && data.length > 0) return data as UserPR[];
+      try {
+        const { data, error } = await supabase
+          .from('user_prs')
+          .select('*')
+          .order('weight_kg', { ascending: false });
+        if (!error && data) {
+          this.set('user_prs', data as UserPR[]);
+          return data as UserPR[];
+        }
+      } catch (err) {
+        console.error('Erro ao buscar user_prs:', err);
+      }
     }
     return this.get('user_prs', defaultPRs);
   }
@@ -199,18 +280,20 @@ export class OmniStore {
   }): Promise<WorkoutSession> {
     const now = new Date().toISOString();
     const sDate = sessionInput.session_date || now.split('T')[0];
-    const sessionId = `ws_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+    const sessionId = generateUUID();
+    const authUserId = await this.getAuthenticatedUserId();
 
-    const exercisesFormatted: WorkoutSessionExercise[] = sessionInput.exercises.map((ex, idx) => ({
-      ...ex,
-      id: `wse_${Date.now()}_${idx}_${Math.random().toString(36).substr(2, 4)}`,
-      session_id: sessionId,
-      created_at: now,
-    }));
+    const exercisesFormatted: WorkoutSessionExercise[] =
+      sessionInput.exercises.map((ex) => ({
+        ...ex,
+        id: generateUUID(),
+        session_id: sessionId,
+        created_at: now,
+      }));
 
     const newSession: WorkoutSession = {
       id: sessionId,
-      user_id: DEMO_USER_ID,
+      user_id: authUserId || DEMO_USER_ID,
       title: sessionInput.title,
       session_date: sDate,
       total_session_volume_kg: sessionInput.total_session_volume_kg,
@@ -220,10 +303,10 @@ export class OmniStore {
       exercises: exercisesFormatted,
     };
 
-    if (isSupabaseConfigured && supabase) {
+    if (isSupabaseConfigured && supabase && authUserId) {
       const { error: sessErr } = await supabase.from('workout_sessions').insert({
         id: newSession.id,
-        user_id: newSession.user_id,
+        user_id: authUserId,
         title: newSession.title,
         session_date: newSession.session_date,
         total_session_volume_kg: newSession.total_session_volume_kg,
@@ -232,7 +315,7 @@ export class OmniStore {
         created_at: newSession.created_at,
       });
 
-      if (!sessErr) {
+      if (!sessErr && exercisesFormatted.length > 0) {
         const exercisesToInsert = exercisesFormatted.map((ex) => ({
           id: ex.id,
           session_id: ex.session_id,
@@ -244,11 +327,13 @@ export class OmniStore {
           observation: ex.observation,
           created_at: ex.created_at,
         }));
-        await supabase.from('workout_session_exercises').insert(exercisesToInsert);
+        await supabase
+          .from('workout_session_exercises')
+          .insert(exercisesToInsert);
       }
     }
 
-    const currentSessions = await this.getWorkoutSessions();
+    const currentSessions = this.get('workout_sessions', defaultSessions);
     const updatedSessions = [newSession, ...currentSessions];
     this.set('workout_sessions', updatedSessions);
 
@@ -268,19 +353,21 @@ export class OmniStore {
     }
   ): Promise<WorkoutSession> {
     const now = new Date().toISOString();
-    const exercisesFormatted: WorkoutSessionExercise[] = sessionInput.exercises.map((ex, idx) => ({
-      ...ex,
-      id: `wse_${Date.now()}_${idx}_${Math.random().toString(36).substr(2, 4)}`,
-      session_id: sessionId,
-      created_at: now,
-    }));
+    const authUserId = await this.getAuthenticatedUserId();
+    const exercisesFormatted: WorkoutSessionExercise[] =
+      sessionInput.exercises.map((ex) => ({
+        ...ex,
+        id: generateUUID(),
+        session_id: sessionId,
+        created_at: now,
+      }));
 
     const currentSessions = await this.getWorkoutSessions();
     const oldSession = currentSessions.find((s) => s.id === sessionId);
 
     const updatedSession: WorkoutSession = {
       id: sessionId,
-      user_id: DEMO_USER_ID,
+      user_id: authUserId || oldSession?.user_id || DEMO_USER_ID,
       title: sessionInput.title,
       session_date: sessionInput.session_date,
       total_session_volume_kg: sessionInput.total_session_volume_kg,
@@ -291,33 +378,43 @@ export class OmniStore {
     };
 
     if (isSupabaseConfigured && supabase) {
-      await supabase
-        .from('workout_sessions')
-        .update({
-          title: updatedSession.title,
-          session_date: updatedSession.session_date,
-          total_session_volume_kg: updatedSession.total_session_volume_kg,
-          coach_feedback: updatedSession.coach_feedback,
-        })
-        .eq('id', sessionId);
+      await Promise.all([
+        supabase
+          .from('workout_sessions')
+          .update({
+            title: updatedSession.title,
+            session_date: updatedSession.session_date,
+            total_session_volume_kg: updatedSession.total_session_volume_kg,
+            coach_feedback: updatedSession.coach_feedback,
+          })
+          .eq('id', sessionId),
+        supabase
+          .from('workout_session_exercises')
+          .delete()
+          .eq('session_id', sessionId),
+      ]);
 
-      await supabase.from('workout_session_exercises').delete().eq('session_id', sessionId);
-
-      const exercisesToInsert = exercisesFormatted.map((ex) => ({
-        id: ex.id,
-        session_id: sessionId,
-        exercise_name: ex.exercise_name,
-        muscle_group: ex.muscle_group,
-        sets: ex.sets,
-        best_weight_kg: ex.best_weight_kg,
-        exercise_volume_kg: ex.exercise_volume_kg,
-        observation: ex.observation,
-        created_at: ex.created_at,
-      }));
-      await supabase.from('workout_session_exercises').insert(exercisesToInsert);
+      if (exercisesFormatted.length > 0) {
+        const exercisesToInsert = exercisesFormatted.map((ex) => ({
+          id: ex.id,
+          session_id: sessionId,
+          exercise_name: ex.exercise_name,
+          muscle_group: ex.muscle_group,
+          sets: ex.sets,
+          best_weight_kg: ex.best_weight_kg,
+          exercise_volume_kg: ex.exercise_volume_kg,
+          observation: ex.observation,
+          created_at: ex.created_at,
+        }));
+        await supabase
+          .from('workout_session_exercises')
+          .insert(exercisesToInsert);
+      }
     }
 
-    const updatedList = currentSessions.map((s) => (s.id === sessionId ? updatedSession : s));
+    const updatedList = currentSessions.map((s) =>
+      s.id === sessionId ? updatedSession : s
+    );
     this.set('workout_sessions', updatedList);
 
     await this.updatePRsFromSession(updatedSession);
@@ -328,7 +425,7 @@ export class OmniStore {
     if (isSupabaseConfigured && supabase) {
       await supabase.from('workout_sessions').delete().eq('id', id);
     }
-    const currentSessions = await this.getWorkoutSessions();
+    const currentSessions = this.get('workout_sessions', defaultSessions);
     const updated = currentSessions.filter((s) => s.id !== id);
     this.set('workout_sessions', updated);
   }
@@ -341,9 +438,10 @@ export class OmniStore {
     reps: number;
     achieved_at: string;
   }): Promise<UserPR> {
+    const authUserId = await this.getAuthenticatedUserId();
     const newPR: UserPR = {
-      id: `pr_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
-      user_id: DEMO_USER_ID,
+      id: generateUUID(),
+      user_id: authUserId || DEMO_USER_ID,
       exercise_name: prInput.exercise_name,
       muscle_group: prInput.muscle_group,
       weight_kg: prInput.weight_kg,
@@ -352,13 +450,16 @@ export class OmniStore {
       created_at: new Date().toISOString(),
     };
 
-    if (isSupabaseConfigured && supabase) {
-      await supabase.from('user_prs').upsert(newPR, { onConflict: 'user_id, exercise_name' });
+    if (isSupabaseConfigured && supabase && authUserId) {
+      await supabase
+        .from('user_prs')
+        .upsert(newPR, { onConflict: 'user_id, exercise_name' });
     }
 
     const currentPRs = await this.getUserPRs();
     const existingIndex = currentPRs.findIndex(
-      (p) => p.exercise_name.toLowerCase() === prInput.exercise_name.toLowerCase()
+      (p) =>
+        p.exercise_name.toLowerCase() === prInput.exercise_name.toLowerCase()
     );
 
     let updatedPRs: UserPR[];
@@ -392,24 +493,31 @@ export class OmniStore {
     if (isSupabaseConfigured && supabase) {
       await supabase.from('user_prs').delete().eq('id', id);
     }
-    const currentPRs = await this.getUserPRs();
+    const currentPRs = this.get('user_prs', defaultPRs);
     const updated = currentPRs.filter((p) => p.id !== id);
     this.set('user_prs', updated);
   }
 
-  private static async updatePRsFromSession(session: WorkoutSession): Promise<void> {
+  private static async updatePRsFromSession(
+    session: WorkoutSession
+  ): Promise<void> {
+    if (!session.exercises || session.exercises.length === 0) return;
+
     const currentPRs = await this.getUserPRs();
     const updatedPRs = [...currentPRs];
-
-    if (!session.exercises) return;
+    const authUserId = await this.getAuthenticatedUserId();
+    const recordsToUpsert: UserPR[] = [];
 
     for (const ex of session.exercises) {
       const bestWeight = ex.best_weight_kg;
-      const bestSet = ex.sets.find((s) => s.total_weight_kg === bestWeight) || ex.sets[ex.sets.length - 1];
+      const bestSet =
+        ex.sets.find((s) => s.total_weight_kg === bestWeight) ||
+        ex.sets[ex.sets.length - 1];
       const repsAchieved = bestSet ? bestSet.reps : 1;
 
       const existingPrIndex = updatedPRs.findIndex(
-        (p) => p.exercise_name.toLowerCase() === ex.exercise_name.toLowerCase()
+        (p) =>
+          p.exercise_name.toLowerCase() === ex.exercise_name.toLowerCase()
       );
 
       if (existingPrIndex >= 0) {
@@ -417,7 +525,7 @@ export class OmniStore {
         if (bestWeight > existingPR.weight_kg) {
           const newPRRecord: UserPR = {
             id: existingPR.id,
-            user_id: DEMO_USER_ID,
+            user_id: authUserId || existingPR.user_id || DEMO_USER_ID,
             exercise_name: ex.exercise_name,
             muscle_group: ex.muscle_group,
             weight_kg: bestWeight,
@@ -426,17 +534,13 @@ export class OmniStore {
             workout_session_id: session.id,
             created_at: new Date().toISOString(),
           };
-
           updatedPRs[existingPrIndex] = newPRRecord;
-
-          if (isSupabaseConfigured && supabase) {
-            await supabase.from('user_prs').upsert(newPRRecord, { onConflict: 'user_id, exercise_name' });
-          }
+          recordsToUpsert.push(newPRRecord);
         }
       } else {
         const newPRRecord: UserPR = {
-          id: `pr_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
-          user_id: DEMO_USER_ID,
+          id: generateUUID(),
+          user_id: authUserId || DEMO_USER_ID,
           exercise_name: ex.exercise_name,
           muscle_group: ex.muscle_group,
           weight_kg: bestWeight,
@@ -445,13 +549,20 @@ export class OmniStore {
           workout_session_id: session.id,
           created_at: new Date().toISOString(),
         };
-
         updatedPRs.push(newPRRecord);
-
-        if (isSupabaseConfigured && supabase) {
-          await supabase.from('user_prs').upsert(newPRRecord, { onConflict: 'user_id, exercise_name' });
-        }
+        recordsToUpsert.push(newPRRecord);
       }
+    }
+
+    if (
+      isSupabaseConfigured &&
+      supabase &&
+      authUserId &&
+      recordsToUpsert.length > 0
+    ) {
+      await supabase
+        .from('user_prs')
+        .upsert(recordsToUpsert, { onConflict: 'user_id, exercise_name' });
     }
 
     this.set('user_prs', updatedPRs);
@@ -460,23 +571,44 @@ export class OmniStore {
   // Body Metrics
   static async getBodyMetrics(): Promise<BodyMetric[]> {
     if (isSupabaseConfigured && supabase) {
-      const { data } = await supabase.from('body_metrics').select('*').order('logged_at', { ascending: true });
-      if (data && data.length > 0) return data as BodyMetric[];
+      try {
+        const { data, error } = await supabase
+          .from('body_metrics')
+          .select('*')
+          .order('logged_at', { ascending: true });
+        if (!error && data) {
+          this.set('body_metrics', data as BodyMetric[]);
+          return data as BodyMetric[];
+        }
+      } catch (err) {
+        console.error('Erro ao buscar body_metrics:', err);
+      }
     }
     return this.get('body_metrics', defaultBodyMetrics);
   }
 
-  static async addBodyMetric(metric: Omit<BodyMetric, 'id' | 'user_id' | 'logged_at'>): Promise<BodyMetric> {
+  static async addBodyMetric(
+    metric: Omit<BodyMetric, 'id' | 'user_id' | 'logged_at'>
+  ): Promise<BodyMetric> {
+    const authUserId = await this.getAuthenticatedUserId();
     const newMetric: BodyMetric = {
       ...metric,
-      id: `b_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
-      user_id: DEMO_USER_ID,
+      id: generateUUID(),
+      user_id: authUserId || DEMO_USER_ID,
       logged_at: new Date().toISOString(),
     };
 
-    if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.from('body_metrics').insert(newMetric).select().single();
-      if (data && !error) return data as BodyMetric;
+    if (isSupabaseConfigured && supabase && authUserId) {
+      const { data, error } = await supabase
+        .from('body_metrics')
+        .insert(newMetric)
+        .select()
+        .single();
+      if (data && !error) {
+        const current = this.get('body_metrics', defaultBodyMetrics);
+        this.set('body_metrics', [...current, data as BodyMetric]);
+        return data as BodyMetric;
+      }
     }
 
     const current = await this.getBodyMetrics();
@@ -489,7 +621,7 @@ export class OmniStore {
     if (isSupabaseConfigured && supabase) {
       await supabase.from('body_metrics').delete().eq('id', id);
     }
-    const current = await this.getBodyMetrics();
+    const current = this.get('body_metrics', defaultBodyMetrics);
     const updated = current.filter((b) => b.id !== id);
     this.set('body_metrics', updated);
   }
@@ -497,28 +629,51 @@ export class OmniStore {
   // Water Logs
   static async getWaterLogs(): Promise<WaterLog[]> {
     if (isSupabaseConfigured && supabase) {
-      const { data } = await supabase.from('water_logs').select('*').order('logged_at', { ascending: false });
-      if (data && data.length > 0) return data as WaterLog[];
+      try {
+        const { data, error } = await supabase
+          .from('water_logs')
+          .select('*')
+          .order('logged_at', { ascending: false });
+        if (!error && data) {
+          this.set('water_logs', data as WaterLog[]);
+          return data as WaterLog[];
+        }
+      } catch (err) {
+        console.error('Erro ao buscar water_logs:', err);
+      }
     }
     return this.get('water_logs', defaultWaterLogs);
   }
 
-  static async addWaterLog(amount_ml: number, targetDate?: string): Promise<WaterLog> {
+  static async addWaterLog(
+    amount_ml: number,
+    targetDate?: string
+  ): Promise<WaterLog> {
     const todayStr = new Date().toISOString().split('T')[0];
-    const logged_at = targetDate && targetDate !== todayStr
-      ? `${targetDate}T12:00:00.000Z`
-      : new Date().toISOString();
+    const logged_at =
+      targetDate && targetDate !== todayStr
+        ? `${targetDate}T12:00:00.000Z`
+        : new Date().toISOString();
+    const authUserId = await this.getAuthenticatedUserId();
 
     const newLog: WaterLog = {
-      id: `wt_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
-      user_id: DEMO_USER_ID,
+      id: generateUUID(),
+      user_id: authUserId || DEMO_USER_ID,
       amount_ml,
       logged_at,
     };
 
-    if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.from('water_logs').insert(newLog).select().single();
-      if (data && !error) return data as WaterLog;
+    if (isSupabaseConfigured && supabase && authUserId) {
+      const { data, error } = await supabase
+        .from('water_logs')
+        .insert(newLog)
+        .select()
+        .single();
+      if (data && !error) {
+        const current = this.get('water_logs', defaultWaterLogs);
+        this.set('water_logs', [data as WaterLog, ...current]);
+        return data as WaterLog;
+      }
     }
 
     const current = await this.getWaterLogs();
@@ -527,18 +682,23 @@ export class OmniStore {
     return newLog;
   }
 
-  static async subtractWaterLog(amount_ml: number, targetDate?: string): Promise<boolean> {
+  static async subtractWaterLog(
+    amount_ml: number,
+    targetDate?: string
+  ): Promise<boolean> {
     const dateStr = targetDate || new Date().toISOString().split('T')[0];
     const current = await this.getWaterLogs();
 
-    // Filter logs for targetDate, sorted by logged_at descending (newest first)
     const dateLogs = current
       .filter((w) => w.logged_at.split('T')[0] === dateStr)
-      .sort((a, b) => new Date(b.logged_at).getTime() - new Date(a.logged_at).getTime());
+      .sort(
+        (a, b) =>
+          new Date(b.logged_at).getTime() - new Date(a.logged_at).getTime()
+      );
 
     const currentTotal = dateLogs.reduce((acc, curr) => acc + curr.amount_ml, 0);
     if (currentTotal <= 0) {
-      return false; // Total is already 0 ml, cannot subtract
+      return false;
     }
 
     let remainingToSubtract = Math.min(amount_ml, currentTotal);
@@ -559,14 +719,20 @@ export class OmniStore {
     }
 
     if (isSupabaseConfigured && supabase) {
+      const ops: PromiseLike<any>[] = [];
       if (logsToDelete.length > 0) {
-        await supabase.from('water_logs').delete().in('id', logsToDelete);
+        ops.push(supabase.from('water_logs').delete().in('id', logsToDelete));
       }
       for (const updateItem of logsToUpdate) {
-        await supabase
-          .from('water_logs')
-          .update({ amount_ml: updateItem.amount_ml })
-          .eq('id', updateItem.id);
+        ops.push(
+          supabase
+            .from('water_logs')
+            .update({ amount_ml: updateItem.amount_ml })
+            .eq('id', updateItem.id)
+        );
+      }
+      if (ops.length > 0) {
+        await Promise.all(ops);
       }
     }
 
@@ -584,32 +750,55 @@ export class OmniStore {
   static async resetTodayWater(): Promise<void> {
     const todayStr = new Date().toISOString().split('T')[0];
     const current = await this.getWaterLogs();
-    const updated = current.filter((w) => w.logged_at.split('T')[0] !== todayStr);
+    const updated = current.filter(
+      (w) => w.logged_at.split('T')[0] !== todayStr
+    );
     this.set('water_logs', updated);
   }
 
   // Second Brain Notes
   static async getNotes(): Promise<SecondBrainNote[]> {
     if (isSupabaseConfigured && supabase) {
-      const { data } = await supabase.from('second_brain_notes').select('*').order('created_at', { ascending: false });
-      if (data && data.length > 0) return data as SecondBrainNote[];
+      try {
+        const { data, error } = await supabase
+          .from('second_brain_notes')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (!error && data) {
+          this.set('second_brain_notes', data as SecondBrainNote[]);
+          return data as SecondBrainNote[];
+        }
+      } catch (err) {
+        console.error('Erro ao buscar second_brain_notes:', err);
+      }
     }
     return this.get('second_brain_notes', defaultNotes);
   }
 
-  static async addNote(note: Omit<SecondBrainNote, 'id' | 'user_id' | 'created_at' | 'updated_at'>): Promise<SecondBrainNote> {
+  static async addNote(
+    note: Omit<SecondBrainNote, 'id' | 'user_id' | 'created_at' | 'updated_at'>
+  ): Promise<SecondBrainNote> {
     const now = new Date().toISOString();
+    const authUserId = await this.getAuthenticatedUserId();
     const newNote: SecondBrainNote = {
       ...note,
-      id: `note_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
-      user_id: DEMO_USER_ID,
+      id: generateUUID(),
+      user_id: authUserId || DEMO_USER_ID,
       created_at: now,
       updated_at: now,
     };
 
-    if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.from('second_brain_notes').insert(newNote).select().single();
-      if (data && !error) return data as SecondBrainNote;
+    if (isSupabaseConfigured && supabase && authUserId) {
+      const { data, error } = await supabase
+        .from('second_brain_notes')
+        .insert(newNote)
+        .select()
+        .single();
+      if (data && !error) {
+        const current = this.get('second_brain_notes', defaultNotes);
+        this.set('second_brain_notes', [data as SecondBrainNote, ...current]);
+        return data as SecondBrainNote;
+      }
     }
 
     const current = await this.getNotes();
@@ -618,11 +807,46 @@ export class OmniStore {
     return newNote;
   }
 
+  static async updateNote(
+    id: string,
+    updates: Partial<
+      Omit<SecondBrainNote, 'id' | 'user_id' | 'created_at' | 'updated_at'>
+    >
+  ): Promise<SecondBrainNote> {
+    const current = await this.getNotes();
+    const existing = current.find((n) => n.id === id);
+    if (!existing) throw new Error('Nota não encontrada');
+
+    const now = new Date().toISOString();
+    const updatedNote: SecondBrainNote = {
+      ...existing,
+      ...updates,
+      updated_at: now,
+    };
+
+    if (isSupabaseConfigured && supabase) {
+      await supabase
+        .from('second_brain_notes')
+        .update({
+          title: updatedNote.title,
+          category: updatedNote.category,
+          content: updatedNote.content,
+          tags: updatedNote.tags,
+          updated_at: updatedNote.updated_at,
+        })
+        .eq('id', id);
+    }
+
+    const updatedList = current.map((n) => (n.id === id ? updatedNote : n));
+    this.set('second_brain_notes', updatedList);
+    return updatedNote;
+  }
+
   static async deleteNote(id: string): Promise<void> {
     if (isSupabaseConfigured && supabase) {
       await supabase.from('second_brain_notes').delete().eq('id', id);
     }
-    const current = await this.getNotes();
+    const current = this.get('second_brain_notes', defaultNotes);
     const updated = current.filter((n) => n.id !== id);
     this.set('second_brain_notes', updated);
   }
@@ -630,32 +854,57 @@ export class OmniStore {
   // Contests & TAF Methods (Multi-Concurso)
   static async getContests(): Promise<Contest[]> {
     if (isSupabaseConfigured && supabase) {
-      const { data } = await supabase.from('contests').select('*').order('created_at', { ascending: false });
-      if (data && data.length > 0) return data as Contest[];
+      try {
+        const { data, error } = await supabase
+          .from('contests')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (!error && data) {
+          this.set('contests', data as Contest[]);
+          return data as Contest[];
+        }
+      } catch (err) {
+        console.error('Erro ao buscar contests:', err);
+      }
     }
     return this.get('contests', defaultContests);
   }
 
-  static async addContest(contestInput: Partial<Contest> & { title: string }): Promise<Contest> {
+  static async addContest(
+    contestInput: Partial<Contest> & { title: string }
+  ): Promise<Contest> {
     const nowIso = new Date().toISOString();
+    const authUserId = await this.getAuthenticatedUserId();
     const newContest: Contest = {
-      id: contestInput.id || `c_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
-      user_id: DEMO_USER_ID,
+      id: contestInput.id || generateUUID(),
+      user_id: authUserId || DEMO_USER_ID,
       title: contestInput.title,
       institution: contestInput.institution || 'Banca Examinadora',
-      target_date: contestInput.target_date || new Date(Date.now() + 90 * 86400 * 1000).toISOString().split('T')[0],
+      target_date:
+        contestInput.target_date ||
+        new Date(Date.now() + 90 * 86400 * 1000).toISOString().split('T')[0],
       is_active: contestInput.is_active ?? true,
       color_tag: contestInput.color_tag || '#3b82f6',
       created_at: nowIso,
     };
 
-    if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.from('contests').insert(newContest).select().single();
-      if (data && !error) return data as Contest;
+    if (isSupabaseConfigured && supabase && authUserId) {
+      const { data, error } = await supabase
+        .from('contests')
+        .insert(newContest)
+        .select()
+        .single();
+      if (data && !error) {
+        const current = this.get('contests', defaultContests);
+        const updatedList = newContest.is_active
+          ? [data as Contest, ...current.map((c) => ({ ...c, is_active: false }))]
+          : [data as Contest, ...current];
+        this.set('contests', updatedList);
+        return data as Contest;
+      }
     }
 
     const current = await this.getContests();
-    // If set to active, deactivate others in local array
     const updated = newContest.is_active
       ? [newContest, ...current.map((c) => ({ ...c, is_active: false }))]
       : [newContest, ...current];
@@ -672,8 +921,10 @@ export class OmniStore {
     }));
 
     if (isSupabaseConfigured && supabase) {
-      await supabase.from('contests').update({ is_active: false }).neq('id', id);
-      await supabase.from('contests').update({ is_active: true }).eq('id', id);
+      await Promise.all([
+        supabase.from('contests').update({ is_active: false }).neq('id', id),
+        supabase.from('contests').update({ is_active: true }).eq('id', id),
+      ]);
     }
 
     this.set('contests', updated);
@@ -684,7 +935,7 @@ export class OmniStore {
     if (isSupabaseConfigured && supabase) {
       await supabase.from('contests').delete().eq('id', id);
     }
-    const current = await this.getContests();
+    const current = this.get('contests', defaultContests);
     const updated = current.filter((c) => c.id !== id);
     if (updated.length > 0 && !updated.some((c) => c.is_active)) {
       updated[0].is_active = true;
@@ -692,12 +943,26 @@ export class OmniStore {
     this.set('contests', updated);
   }
 
-  static async getContestSubjects(contestId?: string): Promise<ContestSubject[]> {
+  static async getContestSubjects(
+    contestId?: string
+  ): Promise<ContestSubject[]> {
     if (isSupabaseConfigured && supabase) {
-      let query = supabase.from('contest_subjects').select('*').order('created_at', { ascending: true });
-      if (contestId) query = query.eq('contest_id', contestId);
-      const { data } = await query;
-      if (data && data.length > 0) return data as ContestSubject[];
+      try {
+        let query = supabase
+          .from('contest_subjects')
+          .select('*')
+          .order('created_at', { ascending: true });
+        if (contestId) query = query.eq('contest_id', contestId);
+        const { data, error } = await query;
+        if (!error && data) {
+          if (!contestId) {
+            this.set('contest_subjects', data as ContestSubject[]);
+          }
+          return data as ContestSubject[];
+        }
+      } catch (err) {
+        console.error('Erro ao buscar contest_subjects:', err);
+      }
     }
 
     const all = this.get('contest_subjects', defaultContestSubjects);
@@ -709,18 +974,26 @@ export class OmniStore {
 
   static async addContestSubject(
     input:
-      | { contest_id?: string; subject_name: string; topic_name: string; contest_name?: string }
-      | string,
-    topicsArg?: string[]
+      | {
+          contest_id?: string;
+          subject_name: string;
+          topic_name: string;
+          contest_name?: string;
+        }
+      | string
   ): Promise<ContestSubject> {
-    let contestId = typeof input === 'string' ? 'c1' : input.contest_id || 'c1';
-    let subjectName = typeof input === 'string' ? 'Geral' : input.subject_name || 'Geral';
-    let topicName = typeof input === 'string' ? input : input.topic_name || 'Tópico de Estudo';
+    const contestId =
+      typeof input === 'string' ? '' : input.contest_id || '';
+    const subjectName =
+      typeof input === 'string' ? 'Geral' : input.subject_name || 'Geral';
+    const topicName =
+      typeof input === 'string' ? input : input.topic_name || 'Tópico de Estudo';
 
     const nowIso = new Date().toISOString();
+    const authUserId = await this.getAuthenticatedUserId();
     const newSubject: ContestSubject = {
-      id: `cs_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
-      user_id: DEMO_USER_ID,
+      id: generateUUID(),
+      user_id: authUserId || DEMO_USER_ID,
       contest_id: contestId,
       subject_name: subjectName,
       topic_name: topicName,
@@ -729,27 +1002,48 @@ export class OmniStore {
       created_at: nowIso,
     };
 
-    if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.from('contest_subjects').insert(newSubject).select().single();
-      if (data && !error) return data as ContestSubject;
+    if (isSupabaseConfigured && supabase && authUserId) {
+      const { data, error } = await supabase
+        .from('contest_subjects')
+        .insert(newSubject)
+        .select()
+        .single();
+      if (data && !error) {
+        const current = this.get('contest_subjects', defaultContestSubjects);
+        this.set('contest_subjects', [...current, data as ContestSubject]);
+        return data as ContestSubject;
+      }
     }
 
-    const current = await this.getContestSubjects();
+    const current = this.get('contest_subjects', defaultContestSubjects);
     const updated = [...current, newSubject];
     this.set('contest_subjects', updated);
     return newSubject;
   }
 
-  static async updateContestSubject(id: string, updates: Partial<ContestSubject>): Promise<ContestSubject> {
-    const current = await this.getContestSubjects();
+  static async updateContestSubject(
+    id: string,
+    updates: Partial<ContestSubject>
+  ): Promise<ContestSubject> {
+    const current = this.get('contest_subjects', defaultContestSubjects);
     const existing = current.find((s) => s.id === id);
-    if (!existing) throw new Error('Contest subject not found');
 
-    const updated: ContestSubject = { ...existing, ...updates };
     if (isSupabaseConfigured && supabase) {
       await supabase.from('contest_subjects').update(updates).eq('id', id);
     }
 
+    if (!existing) {
+      return {
+        id,
+        contest_id: '',
+        subject_name: '',
+        topic_name: '',
+        is_completed: Boolean(updates.is_completed),
+        ...updates,
+      };
+    }
+
+    const updated: ContestSubject = { ...existing, ...updates };
     const updatedList = current.map((s) => (s.id === id ? updated : s));
     this.set('contest_subjects', updatedList);
     return updated;
@@ -761,7 +1055,9 @@ export class OmniStore {
     if (!target) return;
 
     const newCompleted = !target.is_completed;
-    const newReviews = newCompleted ? (target.reviews_count || 0) + 1 : target.reviews_count || 0;
+    const newReviews = newCompleted
+      ? (target.reviews_count || 0) + 1
+      : target.reviews_count || 0;
 
     if (isSupabaseConfigured && supabase) {
       await supabase
@@ -770,7 +1066,11 @@ export class OmniStore {
         .eq('id', id);
     }
 
-    const updated = current.map((s) => (s.id === id ? { ...s, is_completed: newCompleted, reviews_count: newReviews } : s));
+    const updated = current.map((s) =>
+      s.id === id
+        ? { ...s, is_completed: newCompleted, reviews_count: newReviews }
+        : s
+    );
     this.set('contest_subjects', updated);
   }
 
@@ -778,17 +1078,29 @@ export class OmniStore {
     if (isSupabaseConfigured && supabase) {
       await supabase.from('contest_subjects').delete().eq('id', id);
     }
-    const current = await this.getContestSubjects();
+    const current = this.get('contest_subjects', defaultContestSubjects);
     const updated = current.filter((s) => s.id !== id);
     this.set('contest_subjects', updated);
   }
 
   static async getStudySessions(contestId?: string): Promise<StudySession[]> {
     if (isSupabaseConfigured && supabase) {
-      let query = supabase.from('study_sessions').select('*').order('created_at', { ascending: false });
-      if (contestId) query = query.eq('contest_id', contestId);
-      const { data } = await query;
-      if (data && data.length > 0) return data as StudySession[];
+      try {
+        let query = supabase
+          .from('study_sessions')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (contestId) query = query.eq('contest_id', contestId);
+        const { data, error } = await query;
+        if (!error && data) {
+          if (!contestId) {
+            this.set('study_sessions', data as StudySession[]);
+          }
+          return data as StudySession[];
+        }
+      } catch (err) {
+        console.error('Erro ao buscar study_sessions:', err);
+      }
     }
 
     const all = this.get('study_sessions', defaultStudySessions);
@@ -800,13 +1112,16 @@ export class OmniStore {
 
   static async addStudySession(sessionInput: any): Promise<StudySession> {
     const nowIso = new Date().toISOString();
-    const duration = Number(sessionInput.minutes_studied || sessionInput.duration_minutes || 30);
+    const duration = Number(
+      sessionInput.minutes_studied || sessionInput.duration_minutes || 30
+    );
     const subj = sessionInput.subject_name || sessionInput.subject || 'Geral';
-    const contestId = sessionInput.contest_id || 'c1';
+    const contestId = sessionInput.contest_id || '';
+    const authUserId = await this.getAuthenticatedUserId();
 
     const newSession: StudySession = {
-      id: `ss_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
-      user_id: DEMO_USER_ID,
+      id: generateUUID(),
+      user_id: authUserId || DEMO_USER_ID,
       contest_id: contestId,
       subject_id: sessionInput.subject_id || undefined,
       subject_name: subj,
@@ -818,42 +1133,73 @@ export class OmniStore {
       created_at: nowIso,
     };
 
-    if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.from('study_sessions').insert(newSession).select().single();
-      if (data && !error) return data as StudySession;
+    if (isSupabaseConfigured && supabase && authUserId) {
+      const { data, error } = await supabase
+        .from('study_sessions')
+        .insert(newSession)
+        .select()
+        .single();
+      if (data && !error) {
+        const current = this.get('study_sessions', defaultStudySessions);
+        this.set('study_sessions', [data as StudySession, ...current]);
+        return data as StudySession;
+      }
     }
 
-    const current = await this.getStudySessions();
+    const current = this.get('study_sessions', defaultStudySessions);
     const updated = [newSession, ...current];
     this.set('study_sessions', updated);
     return newSession;
   }
 
-  static async getContestTafRequirements(contestId?: string): Promise<ContestTafRequirement[]> {
+  static async getContestTafRequirements(
+    contestId?: string
+  ): Promise<ContestTafRequirement[]> {
     if (isSupabaseConfigured && supabase) {
-      let query = supabase.from('contest_taf_requirements').select('*').order('created_at', { ascending: true });
-      if (contestId) query = query.eq('contest_id', contestId);
-      const { data } = await query;
-      if (data && data.length > 0) return data as ContestTafRequirement[];
+      try {
+        let query = supabase
+          .from('contest_taf_requirements')
+          .select('*')
+          .order('created_at', { ascending: true });
+        if (contestId) query = query.eq('contest_id', contestId);
+        const { data, error } = await query;
+        if (!error && data) {
+          if (!contestId) {
+            this.set(
+              'contest_taf_requirements',
+              data as ContestTafRequirement[]
+            );
+          }
+          return data as ContestTafRequirement[];
+        }
+      } catch (err) {
+        console.error('Erro ao buscar contest_taf_requirements:', err);
+      }
     }
 
-    const all = this.get('contest_taf_requirements', defaultContestTafRequirements);
+    const all = this.get(
+      'contest_taf_requirements',
+      defaultContestTafRequirements
+    );
     if (contestId) {
       return all.filter((r) => r.contest_id === contestId);
     }
     return all;
   }
 
-  static async addContestTafRequirement(reqInput: any): Promise<ContestTafRequirement> {
+  static async addContestTafRequirement(
+    reqInput: any
+  ): Promise<ContestTafRequirement> {
     const nowIso = new Date().toISOString();
-    const contestId = reqInput.contest_id || 'c1';
+    const contestId = reqInput.contest_id || '';
     const targetVal = Number(reqInput.target_value || reqInput.targetVal || 0);
     const bestVal = Number(reqInput.current_best || reqInput.currentBest || 0);
     const isPassed = bestVal >= targetVal && targetVal > 0;
+    const authUserId = await this.getAuthenticatedUserId();
 
     const newReq: ContestTafRequirement = {
-      id: `tafr_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
-      user_id: DEMO_USER_ID,
+      id: generateUUID(),
+      user_id: authUserId || DEMO_USER_ID,
       contest_id: contestId,
       modality: reqInput.modality,
       target_value: targetVal,
@@ -863,18 +1209,38 @@ export class OmniStore {
       created_at: nowIso,
     };
 
-    if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.from('contest_taf_requirements').insert(newReq).select().single();
-      if (data && !error) return data as ContestTafRequirement;
+    if (isSupabaseConfigured && supabase && authUserId) {
+      const { data, error } = await supabase
+        .from('contest_taf_requirements')
+        .insert(newReq)
+        .select()
+        .single();
+      if (data && !error) {
+        const current = this.get(
+          'contest_taf_requirements',
+          defaultContestTafRequirements
+        );
+        this.set('contest_taf_requirements', [
+          ...current,
+          data as ContestTafRequirement,
+        ]);
+        return data as ContestTafRequirement;
+      }
     }
 
-    const current = await this.getContestTafRequirements();
+    const current = this.get(
+      'contest_taf_requirements',
+      defaultContestTafRequirements
+    );
     const updated = [...current, newReq];
     this.set('contest_taf_requirements', updated);
     return newReq;
   }
 
-  static async updateContestTafRequirement(id: string, reqData: Partial<ContestTafRequirement>): Promise<ContestTafRequirement> {
+  static async updateContestTafRequirement(
+    id: string,
+    reqData: Partial<ContestTafRequirement>
+  ): Promise<ContestTafRequirement> {
     const current = await this.getContestTafRequirements();
     const existing = current.find((r) => r.id === id);
     if (!existing) throw new Error('TAF Requirement not found');
@@ -885,7 +1251,16 @@ export class OmniStore {
     }
 
     if (isSupabaseConfigured && supabase) {
-      await supabase.from('contest_taf_requirements').update(updated).eq('id', id);
+      await supabase
+        .from('contest_taf_requirements')
+        .update({
+          modality: updated.modality,
+          target_value: updated.target_value,
+          unit: updated.unit,
+          current_best: updated.current_best,
+          is_passed: updated.is_passed,
+        })
+        .eq('id', id);
     }
 
     const updatedList = current.map((r) => (r.id === id ? updated : r));
@@ -897,7 +1272,10 @@ export class OmniStore {
     if (isSupabaseConfigured && supabase) {
       await supabase.from('contest_taf_requirements').delete().eq('id', id);
     }
-    const current = await this.getContestTafRequirements();
+    const current = this.get(
+      'contest_taf_requirements',
+      defaultContestTafRequirements
+    );
     const updated = current.filter((r) => r.id !== id);
     this.set('contest_taf_requirements', updated);
   }
@@ -905,49 +1283,56 @@ export class OmniStore {
   static async importContestFromGemini(
     parsedData: GeminiParseEditalResponse
   ): Promise<{ contest: Contest; subjectsCount: number; tafCount: number }> {
-    // 1. Create Contest
     const newContest = await this.addContest({
       title: parsedData.contest_title || 'Novo Concurso Importado',
       institution: parsedData.institution || 'Banca Examinadora',
-      target_date: parsedData.target_date || new Date(Date.now() + 90 * 86400 * 1000).toISOString().split('T')[0],
+      target_date:
+        parsedData.target_date ||
+        new Date(Date.now() + 90 * 86400 * 1000).toISOString().split('T')[0],
       is_active: true,
       color_tag: '#06b6d4',
     });
 
     await this.setActiveContest(newContest.id);
 
-    // 2. Add Syllabus Subjects & Topics
-    let subjectsCount = 0;
+    const subjectPromises: Promise<ContestSubject>[] = [];
     if (parsedData.syllabus && parsedData.syllabus.length > 0) {
       for (const subj of parsedData.syllabus) {
         for (const topicStr of subj.topics) {
-          await this.addContestSubject({
-            contest_id: newContest.id,
-            subject_name: subj.subject_name,
-            topic_name: topicStr,
-          });
-          subjectsCount++;
+          subjectPromises.push(
+            this.addContestSubject({
+              contest_id: newContest.id,
+              subject_name: subj.subject_name,
+              topic_name: topicStr,
+            })
+          );
         }
       }
     }
 
-    // 3. Add TAF Requirements
-    let tafCount = 0;
+    const tafPromises: Promise<ContestTafRequirement>[] = [];
     if (parsedData.taf_requirements && parsedData.taf_requirements.length > 0) {
       for (const taf of parsedData.taf_requirements) {
-        await this.addContestTafRequirement({
-          contest_id: newContest.id,
-          modality: taf.modality,
-          target_value: Number(taf.target_value),
-          unit: taf.unit,
-          current_best: 0,
-          is_passed: false,
-        });
-        tafCount++;
+        tafPromises.push(
+          this.addContestTafRequirement({
+            contest_id: newContest.id,
+            modality: taf.modality,
+            target_value: Number(taf.target_value),
+            unit: taf.unit,
+            current_best: 0,
+            is_passed: false,
+          })
+        );
       }
     }
 
-    return { contest: newContest, subjectsCount, tafCount };
+    await Promise.all([...subjectPromises, ...tafPromises]);
+
+    return {
+      contest: newContest,
+      subjectsCount: subjectPromises.length,
+      tafCount: tafPromises.length,
+    };
   }
 
   static async getTafBenchmarks(): Promise<TafBenchmark[]> {
@@ -956,9 +1341,10 @@ export class OmniStore {
 
   static async addTafBenchmark(benchInput: any): Promise<TafBenchmark> {
     const val = benchInput.score_value ?? benchInput.score ?? 0;
+    const authUserId = await this.getAuthenticatedUserId();
     const newBench: TafBenchmark = {
-      id: `taf_${Date.now()}`,
-      user_id: DEMO_USER_ID,
+      id: generateUUID(),
+      user_id: authUserId || DEMO_USER_ID,
       modality: benchInput.modality,
       score: val,
       score_value: val,
@@ -974,11 +1360,18 @@ export class OmniStore {
   // Physique Assessments (Gemini Vision IA)
   static async getPhysiqueAssessments(): Promise<PhysiqueAssessment[]> {
     if (isSupabaseConfigured && supabase) {
-      const { data } = await supabase
-        .from('physique_assessments')
-        .select('*')
-        .order('created_at', { ascending: false });
-      if (data && data.length > 0) return data as PhysiqueAssessment[];
+      try {
+        const { data, error } = await supabase
+          .from('physique_assessments')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (!error && data) {
+          this.set('physique_assessments', data as PhysiqueAssessment[]);
+          return data as PhysiqueAssessment[];
+        }
+      } catch (err) {
+        console.error('Erro ao buscar physique_assessments:', err);
+      }
     }
     return this.get('physique_assessments', defaultPhysiqueAssessments);
   }
@@ -987,21 +1380,32 @@ export class OmniStore {
     assessmentInput: Omit<PhysiqueAssessment, 'id' | 'user_id' | 'created_at'>
   ): Promise<PhysiqueAssessment> {
     const nowIso = new Date().toISOString();
+    const authUserId = await this.getAuthenticatedUserId();
     const newAssessment: PhysiqueAssessment = {
       ...assessmentInput,
-      id: `pa_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
-      user_id: DEMO_USER_ID,
+      id: generateUUID(),
+      user_id: authUserId || DEMO_USER_ID,
       assessment_date: assessmentInput.assessment_date || nowIso.split('T')[0],
       created_at: nowIso,
     };
 
-    if (isSupabaseConfigured && supabase) {
+    if (isSupabaseConfigured && supabase && authUserId) {
       const { data, error } = await supabase
         .from('physique_assessments')
         .insert(newAssessment)
         .select()
         .single();
-      if (data && !error) return data as PhysiqueAssessment;
+      if (data && !error) {
+        const current = this.get(
+          'physique_assessments',
+          defaultPhysiqueAssessments
+        );
+        this.set('physique_assessments', [
+          data as PhysiqueAssessment,
+          ...current,
+        ]);
+        return data as PhysiqueAssessment;
+      }
     }
 
     const current = await this.getPhysiqueAssessments();
@@ -1014,7 +1418,10 @@ export class OmniStore {
     if (isSupabaseConfigured && supabase) {
       await supabase.from('physique_assessments').delete().eq('id', id);
     }
-    const current = await this.getPhysiqueAssessments();
+    const current = this.get(
+      'physique_assessments',
+      defaultPhysiqueAssessments
+    );
     const updated = current.filter((pa) => pa.id !== id);
     this.set('physique_assessments', updated);
   }
@@ -1023,13 +1430,24 @@ export class OmniStore {
   // SIMULADOS, CADERNO DE ERROS & REVISÃO ESPAÇADA (SRS)
   // ----------------------------------------------------
 
-  // 1. Motor de Simulados
   static async getMockExams(contestId?: string): Promise<MockExam[]> {
     if (isSupabaseConfigured && supabase) {
-      let query = supabase.from('mock_exams').select('*, questions:mock_exam_questions(*)').order('created_at', { ascending: false });
-      if (contestId) query = query.eq('contest_id', contestId);
-      const { data } = await query;
-      if (data && data.length > 0) return data as MockExam[];
+      try {
+        let query = supabase
+          .from('mock_exams')
+          .select('*, questions:mock_exam_questions(*)')
+          .order('created_at', { ascending: false });
+        if (contestId) query = query.eq('contest_id', contestId);
+        const { data, error } = await query;
+        if (!error && data) {
+          if (!contestId) {
+            this.set('mock_exams', data as MockExam[]);
+          }
+          return data as MockExam[];
+        }
+      } catch (err) {
+        console.error('Erro ao buscar mock_exams:', err);
+      }
     }
 
     const all = this.get('mock_exams', defaultMockExams);
@@ -1045,22 +1463,32 @@ export class OmniStore {
   }
 
   static async createMockExam(
-    examInput: Omit<MockExam, 'id' | 'user_id' | 'created_at' | 'status' | 'score_achieved' | 'percentage_score' | 'duration_taken_seconds'>,
+    examInput: Omit<
+      MockExam,
+      | 'id'
+      | 'user_id'
+      | 'created_at'
+      | 'status'
+      | 'score_achieved'
+      | 'percentage_score'
+      | 'duration_taken_seconds'
+    >,
     questionsInput: Omit<MockExamQuestion, 'id' | 'exam_id'>[]
   ): Promise<MockExam> {
     const nowIso = new Date().toISOString();
-    const examId = `me_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+    const examId = generateUUID();
+    const authUserId = await this.getAuthenticatedUserId();
 
-    const questions: MockExamQuestion[] = questionsInput.map((q, idx) => ({
+    const questions: MockExamQuestion[] = questionsInput.map((q) => ({
       ...q,
-      id: `q_${Date.now()}_${idx}_${Math.random().toString(36).substr(2, 4)}`,
+      id: generateUUID(),
       exam_id: examId,
     }));
 
     const newExam: MockExam = {
       ...examInput,
       id: examId,
-      user_id: DEMO_USER_ID,
+      user_id: authUserId || DEMO_USER_ID,
       duration_taken_seconds: 0,
       score_achieved: 0,
       percentage_score: 0,
@@ -1069,24 +1497,28 @@ export class OmniStore {
       questions,
     };
 
-    if (isSupabaseConfigured && supabase) {
-      const { data: insertedExam } = await supabase.from('mock_exams').insert({
-        id: newExam.id,
-        user_id: newExam.user_id,
-        contest_id: newExam.contest_id,
-        title: newExam.title,
-        scoring_system: newExam.scoring_system,
-        total_questions: questions.length,
-        time_limit_minutes: newExam.time_limit_minutes,
-        status: 'in_progress',
-      }).select().single();
+    if (isSupabaseConfigured && supabase && authUserId) {
+      const { data: insertedExam } = await supabase
+        .from('mock_exams')
+        .insert({
+          id: newExam.id,
+          user_id: authUserId,
+          contest_id: newExam.contest_id,
+          title: newExam.title,
+          scoring_system: newExam.scoring_system,
+          total_questions: questions.length,
+          time_limit_minutes: newExam.time_limit_minutes,
+          status: 'in_progress',
+        })
+        .select()
+        .single();
 
-      if (insertedExam) {
+      if (insertedExam && questions.length > 0) {
         await supabase.from('mock_exam_questions').insert(questions);
       }
     }
 
-    const current = await this.getMockExams();
+    const current = this.get('mock_exams', defaultMockExams);
     const updated = [newExam, ...current];
     this.set('mock_exams', updated);
     return newExam;
@@ -1103,20 +1535,17 @@ export class OmniStore {
 
     const questions = exam.questions || [];
     let score = 0;
-    let correctCount = 0;
 
     const evaluatedQuestions = questions.map((q) => {
       const ans = userAnswers[q.id] || '';
-      const isCorrect = ans.trim().toUpperCase() === q.correct_answer.trim().toUpperCase();
+      const isCorrect =
+        ans.trim().toUpperCase() === q.correct_answer.trim().toUpperCase();
 
       if (ans) {
         if (isCorrect) {
-          correctCount++;
           score += 1;
-        } else {
-          if (exam.scoring_system === 'cebraspe_penalty') {
-            score -= 1; // Cebraspe rule: wrong answer deducts 1 point
-          }
+        } else if (exam.scoring_system === 'cebraspe_penalty') {
+          score -= 1;
         }
       }
 
@@ -1140,39 +1569,55 @@ export class OmniStore {
     };
 
     if (isSupabaseConfigured && supabase) {
-      await supabase.from('mock_exams').update({
-        duration_taken_seconds: durationTakenSeconds,
-        score_achieved: score,
-        percentage_score: percentage,
-        status: 'completed',
-      }).eq('id', examId);
-
-      for (const eq of evaluatedQuestions) {
-        await supabase.from('mock_exam_questions').update({
-          user_answer: eq.user_answer,
-          is_correct: eq.is_correct,
-        }).eq('id', eq.id);
-      }
+      const sb = supabase;
+      await Promise.all([
+        sb
+          .from('mock_exams')
+          .update({
+            duration_taken_seconds: durationTakenSeconds,
+            score_achieved: score,
+            percentage_score: percentage,
+            status: 'completed',
+          })
+          .eq('id', examId),
+        ...evaluatedQuestions.map((eq) =>
+          sb
+            .from('mock_exam_questions')
+            .update({
+              user_answer: eq.user_answer,
+              is_correct: eq.is_correct,
+            })
+            .eq('id', eq.id)
+        ),
+      ]);
     }
 
-    // Automatically add incorrect questions to Caderno de Erros
-    for (const eq of evaluatedQuestions) {
-      if (eq.user_answer && !eq.is_correct) {
-        await this.addOrUpdateErrorNotebook({
-          contest_id: contestId,
-          question_id: eq.id,
-          subject_name: eq.subject_name,
-          topic_name: eq.topic_name,
-          error_reason: 'Não sabia o conteúdo',
-          ai_clarification: eq.explanation || `O gabarito correto é "${eq.correct_answer}". Sua resposta foi "${eq.user_answer}".`,
-          is_mastered: false,
-          question: eq,
-        });
-      }
+    const wrongQuestions = evaluatedQuestions.filter(
+      (eq) => eq.user_answer && !eq.is_correct
+    );
+    if (wrongQuestions.length > 0) {
+      await Promise.all(
+        wrongQuestions.map((eq) =>
+          this.addOrUpdateErrorNotebook({
+            contest_id: contestId,
+            question_id: eq.id,
+            subject_name: eq.subject_name,
+            topic_name: eq.topic_name,
+            error_reason: 'Não sabia o conteúdo',
+            ai_clarification:
+              eq.explanation ||
+              `O gabarito correto é "${eq.correct_answer}". Sua resposta foi "${eq.user_answer}".`,
+            is_mastered: false,
+            question: eq,
+          })
+        )
+      );
     }
 
-    const currentExams = await this.getMockExams();
-    const updatedExamsList = currentExams.map((m) => (m.id === examId ? updatedExam : m));
+    const currentExams = this.get('mock_exams', defaultMockExams);
+    const updatedExamsList = currentExams.map((m) =>
+      m.id === examId ? updatedExam : m
+    );
     this.set('mock_exams', updatedExamsList);
 
     return updatedExam;
@@ -1182,18 +1627,32 @@ export class OmniStore {
     if (isSupabaseConfigured && supabase) {
       await supabase.from('mock_exams').delete().eq('id', id);
     }
-    const current = await this.getMockExams();
+    const current = this.get('mock_exams', defaultMockExams);
     const updated = current.filter((m) => m.id !== id);
     this.set('mock_exams', updated);
   }
 
   // 2. Caderno de Erros Inteligente
-  static async getErrorNotebook(contestId?: string): Promise<ErrorNotebookItem[]> {
+  static async getErrorNotebook(
+    contestId?: string
+  ): Promise<ErrorNotebookItem[]> {
     if (isSupabaseConfigured && supabase) {
-      let query = supabase.from('error_notebook').select('*, question:mock_exam_questions(*)').order('created_at', { ascending: false });
-      if (contestId) query = query.eq('contest_id', contestId);
-      const { data } = await query;
-      if (data && data.length > 0) return data as ErrorNotebookItem[];
+      try {
+        let query = supabase
+          .from('error_notebook')
+          .select('*, question:mock_exam_questions(*)')
+          .order('created_at', { ascending: false });
+        if (contestId) query = query.eq('contest_id', contestId);
+        const { data, error } = await query;
+        if (!error && data) {
+          if (!contestId) {
+            this.set('error_notebook', data as ErrorNotebookItem[]);
+          }
+          return data as ErrorNotebookItem[];
+        }
+      } catch (err) {
+        console.error('Erro ao buscar error_notebook:', err);
+      }
     }
 
     const all = this.get('error_notebook', defaultErrorNotebook);
@@ -1217,21 +1676,46 @@ export class OmniStore {
         ...itemInput,
       };
       if (isSupabaseConfigured && supabase) {
-        await supabase.from('error_notebook').update(updatedItem).eq('id', existing.id);
+        await supabase
+          .from('error_notebook')
+          .update({
+            contest_id: updatedItem.contest_id,
+            question_id: updatedItem.question_id,
+            subject_name: updatedItem.subject_name,
+            topic_name: updatedItem.topic_name,
+            error_reason: updatedItem.error_reason,
+            ai_clarification: updatedItem.ai_clarification,
+            is_mastered: updatedItem.is_mastered,
+          })
+          .eq('id', existing.id);
       }
-      const updatedList = current.map((e) => (e.id === existing.id ? updatedItem : e));
+      const updatedList = current.map((e) =>
+        e.id === existing.id ? updatedItem : e
+      );
       this.set('error_notebook', updatedList);
       return updatedItem;
     } else {
       const nowIso = new Date().toISOString();
+      const authUserId = await this.getAuthenticatedUserId();
       const newItem: ErrorNotebookItem = {
         ...itemInput,
-        id: `en_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
-        user_id: DEMO_USER_ID,
+        id: generateUUID(),
+        user_id: authUserId || DEMO_USER_ID,
         created_at: nowIso,
       };
-      if (isSupabaseConfigured && supabase) {
-        await supabase.from('error_notebook').insert(newItem);
+      if (isSupabaseConfigured && supabase && authUserId) {
+        await supabase.from('error_notebook').insert({
+          id: newItem.id,
+          user_id: authUserId,
+          contest_id: newItem.contest_id,
+          question_id: newItem.question_id,
+          subject_name: newItem.subject_name,
+          topic_name: newItem.topic_name,
+          error_reason: newItem.error_reason,
+          ai_clarification: newItem.ai_clarification,
+          is_mastered: newItem.is_mastered,
+          created_at: newItem.created_at,
+        });
       }
       const updatedList = [newItem, ...current];
       this.set('error_notebook', updatedList);
@@ -1239,14 +1723,20 @@ export class OmniStore {
     }
   }
 
-  static async updateErrorReason(errorId: string, errorReason: string): Promise<ErrorNotebookItem> {
+  static async updateErrorReason(
+    errorId: string,
+    errorReason: string
+  ): Promise<ErrorNotebookItem> {
     const current = await this.getErrorNotebook();
     const item = current.find((e) => e.id === errorId);
     if (!item) throw new Error('Item do Caderno de Erros não encontrado');
 
     const updated = { ...item, error_reason: errorReason };
     if (isSupabaseConfigured && supabase) {
-      await supabase.from('error_notebook').update({ error_reason: errorReason }).eq('id', errorId);
+      await supabase
+        .from('error_notebook')
+        .update({ error_reason: errorReason })
+        .eq('id', errorId);
     }
 
     const updatedList = current.map((e) => (e.id === errorId ? updated : e));
@@ -1254,14 +1744,20 @@ export class OmniStore {
     return updated;
   }
 
-  static async updateErrorClarification(errorId: string, aiClarification: string): Promise<ErrorNotebookItem> {
+  static async updateErrorClarification(
+    errorId: string,
+    aiClarification: string
+  ): Promise<ErrorNotebookItem> {
     const current = await this.getErrorNotebook();
     const item = current.find((e) => e.id === errorId);
     if (!item) throw new Error('Item do Caderno de Erros não encontrado');
 
     const updated = { ...item, ai_clarification: aiClarification };
     if (isSupabaseConfigured && supabase) {
-      await supabase.from('error_notebook').update({ ai_clarification: aiClarification }).eq('id', errorId);
+      await supabase
+        .from('error_notebook')
+        .update({ ai_clarification: aiClarification })
+        .eq('id', errorId);
     }
 
     const updatedList = current.map((e) => (e.id === errorId ? updated : e));
@@ -1269,14 +1765,20 @@ export class OmniStore {
     return updated;
   }
 
-  static async markErrorAsMastered(errorId: string, isMastered: boolean): Promise<ErrorNotebookItem> {
+  static async markErrorAsMastered(
+    errorId: string,
+    isMastered: boolean
+  ): Promise<ErrorNotebookItem> {
     const current = await this.getErrorNotebook();
     const item = current.find((e) => e.id === errorId);
     if (!item) throw new Error('Item do Caderno de Erros não encontrado');
 
     const updated = { ...item, is_mastered: isMastered };
     if (isSupabaseConfigured && supabase) {
-      await supabase.from('error_notebook').update({ is_mastered: isMastered }).eq('id', errorId);
+      await supabase
+        .from('error_notebook')
+        .update({ is_mastered: isMastered })
+        .eq('id', errorId);
     }
 
     const updatedList = current.map((e) => (e.id === errorId ? updated : e));
@@ -1288,16 +1790,39 @@ export class OmniStore {
     if (isSupabaseConfigured && supabase) {
       await supabase.from('error_notebook').delete().eq('id', id);
     }
-    const current = await this.getErrorNotebook();
+    const current = this.get('error_notebook', defaultErrorNotebook);
     const updated = current.filter((e) => e.id !== id);
     this.set('error_notebook', updated);
   }
 
   // 3. Sistema de Revisão Espaçada (Curva de Esquecimento / SRS)
-  static async getScheduledReviews(contestId?: string): Promise<ScheduledReview[]> {
+  static async getScheduledReviews(
+    contestId?: string
+  ): Promise<ScheduledReview[]> {
     if (isSupabaseConfigured && supabase) {
-      const { data } = await supabase.from('scheduled_reviews').select('*, subject:contest_subjects(*)').order('scheduled_for', { ascending: true });
-      if (data && data.length > 0) return data as ScheduledReview[];
+      try {
+        const { data, error } = await supabase
+          .from('scheduled_reviews')
+          .select('*, subject:contest_subjects(*)')
+          .order('scheduled_for', { ascending: true });
+        if (!error && data) {
+          const normalized = data.map((row: any) => ({
+            ...row,
+            subject_name: row.subject_name || row.subject?.subject_name,
+            topic_name: row.topic_name || row.subject?.topic_name,
+          })) as ScheduledReview[];
+
+          if (contestId) {
+            return normalized.filter(
+              (r: any) => !r.subject || r.subject.contest_id === contestId
+            );
+          }
+          this.set('scheduled_reviews', normalized);
+          return normalized;
+        }
+      } catch (err) {
+        console.error('Erro ao buscar scheduled_reviews:', err);
+      }
     }
 
     const all = this.get('scheduled_reviews', defaultScheduledReviews);
@@ -1321,12 +1846,15 @@ export class OmniStore {
 
     if (!targetDateStr) {
       const daysToAdd = reviewStage === 1 ? 1 : reviewStage === 2 ? 7 : 30;
-      targetDateStr = new Date(Date.now() + daysToAdd * 86400 * 1000).toISOString().split('T')[0];
+      targetDateStr = new Date(Date.now() + daysToAdd * 86400 * 1000)
+        .toISOString()
+        .split('T')[0];
     }
 
+    const authUserId = await this.getAuthenticatedUserId();
     const newReview: ScheduledReview = {
-      id: `sr_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
-      user_id: DEMO_USER_ID,
+      id: generateUUID(),
+      user_id: authUserId || DEMO_USER_ID,
       subject_id: subjectId,
       subject_name: subjectName,
       topic_name: topicName,
@@ -1336,10 +1864,10 @@ export class OmniStore {
       created_at: nowIso,
     };
 
-    if (isSupabaseConfigured && supabase) {
+    if (isSupabaseConfigured && supabase && authUserId) {
       await supabase.from('scheduled_reviews').insert({
         id: newReview.id,
-        user_id: newReview.user_id,
+        user_id: authUserId,
         subject_id: newReview.subject_id,
         review_stage: newReview.review_stage,
         scheduled_for: newReview.scheduled_for,
@@ -1347,18 +1875,19 @@ export class OmniStore {
       });
     }
 
-    const current = await this.getScheduledReviews();
+    const current = this.get('scheduled_reviews', defaultScheduledReviews);
     const updated = [...current, newReview];
     this.set('scheduled_reviews', updated);
     return newReview;
   }
 
-  static async completeScheduledReview(reviewId: string): Promise<ScheduledReview> {
+  static async completeScheduledReview(
+    reviewId: string
+  ): Promise<ScheduledReview> {
     const current = await this.getScheduledReviews();
     const existing = current.find((r) => r.id === reviewId);
     if (!existing) throw new Error('Revisão agendada não encontrada');
 
-    // Advance Stage or Complete
     const currentStage = existing.review_stage;
     let nextStage = currentStage + 1;
     let isFullyCompleted = false;
@@ -1369,24 +1898,30 @@ export class OmniStore {
     }
 
     const daysToAdd = nextStage === 2 ? 7 : 30;
-    const nextScheduledFor = new Date(Date.now() + daysToAdd * 86400 * 1000).toISOString().split('T')[0];
+    const nextScheduledFor = new Date(Date.now() + daysToAdd * 86400 * 1000)
+      .toISOString()
+      .split('T')[0];
 
     const updated: ScheduledReview = {
       ...existing,
       review_stage: isFullyCompleted ? 3 : nextStage,
-      scheduled_for: isFullyCompleted ? existing.scheduled_for : nextScheduledFor,
+      scheduled_for: isFullyCompleted
+        ? existing.scheduled_for
+        : nextScheduledFor,
       is_completed: isFullyCompleted,
     };
 
     if (isSupabaseConfigured && supabase) {
-      await supabase.from('scheduled_reviews').update({
-        review_stage: updated.review_stage,
-        scheduled_for: updated.scheduled_for,
-        is_completed: updated.is_completed,
-      }).eq('id', reviewId);
+      await supabase
+        .from('scheduled_reviews')
+        .update({
+          review_stage: updated.review_stage,
+          scheduled_for: updated.scheduled_for,
+          is_completed: updated.is_completed,
+        })
+        .eq('id', reviewId);
     }
 
-    // Also increment reviews_count on contest_subjects
     if (existing.subject_id) {
       await this.incrementSubjectReviewCount(existing.subject_id);
     }
@@ -1402,9 +1937,14 @@ export class OmniStore {
     if (subj) {
       const updatedCount = (subj.reviews_count || 0) + 1;
       if (isSupabaseConfigured && supabase) {
-        await supabase.from('contest_subjects').update({ reviews_count: updatedCount }).eq('id', subjectId);
+        await supabase
+          .from('contest_subjects')
+          .update({ reviews_count: updatedCount })
+          .eq('id', subjectId);
       }
-      const updatedSubjects = allSubjects.map((s) => (s.id === subjectId ? { ...s, reviews_count: updatedCount } : s));
+      const updatedSubjects = allSubjects.map((s) =>
+        s.id === subjectId ? { ...s, reviews_count: updatedCount } : s
+      );
       this.set('contest_subjects', updatedSubjects);
     }
   }
@@ -1412,16 +1952,6 @@ export class OmniStore {
   // ----------------------------------------------------
   // MÓDULO FINANCEIRO (SUPABASE + FALLBACK LOCAL ZERADO)
   // ----------------------------------------------------
-
-  private static async getAuthenticatedUserId(): Promise<string | null> {
-    if (!isSupabaseConfigured || !supabase) return null;
-    try {
-      const { data } = await supabase.auth.getUser();
-      return data?.user?.id || null;
-    } catch {
-      return null;
-    }
-  }
 
   // 1. Transações Financeiras (financial_transactions)
   static async getFinancialTransactions(): Promise<FinancialTransaction[]> {
@@ -1446,7 +1976,10 @@ export class OmniStore {
         console.error('Erro ao buscar financial_transactions no Supabase:', err);
       }
     }
-    return this.get<FinancialTransaction[]>('financial_transactions', defaultFinancialTransactions);
+    return this.get<FinancialTransaction[]>(
+      'financial_transactions',
+      defaultFinancialTransactions
+    );
   }
 
   static async addFinancialTransaction(
@@ -1516,7 +2049,9 @@ export class OmniStore {
 
   static async updateFinancialTransaction(
     id: string,
-    updates: Partial<Omit<FinancialTransaction, 'id' | 'user_id' | 'created_at'>>
+    updates: Partial<
+      Omit<FinancialTransaction, 'id' | 'user_id' | 'created_at'>
+    >
   ): Promise<FinancialTransaction> {
     const current = await this.getFinancialTransactions();
     const existing = current.find((t) => t.id === id);
@@ -1525,9 +2060,12 @@ export class OmniStore {
     const updatedTx: FinancialTransaction = {
       ...existing,
       ...updates,
-      amount: updates.amount !== undefined ? Number(updates.amount) : existing.amount,
+      amount:
+        updates.amount !== undefined ? Number(updates.amount) : existing.amount,
       description:
-        updates.description !== undefined ? updates.description.trim() : existing.description,
+        updates.description !== undefined
+          ? updates.description.trim()
+          : existing.description,
       place:
         updates.place !== undefined
           ? updates.place
@@ -1647,7 +2185,10 @@ export class OmniStore {
           target_amount: Number(data.target_amount || 0),
           current_amount: Number(data.current_amount || 0),
         };
-        const current = this.get<FinancialGoal[]>('financial_goals', defaultFinancialGoals);
+        const current = this.get<FinancialGoal[]>(
+          'financial_goals',
+          defaultFinancialGoals
+        );
         this.set('financial_goals', [saved, ...current]);
         return saved;
       }
@@ -1679,7 +2220,10 @@ export class OmniStore {
         updates.current_amount !== undefined
           ? Number(updates.current_amount)
           : existing.current_amount,
-      deadline: updates.deadline !== undefined ? updates.deadline || null : existing.deadline,
+      deadline:
+        updates.deadline !== undefined
+          ? updates.deadline || null
+          : existing.deadline,
       notes:
         updates.notes !== undefined
           ? updates.notes
@@ -1712,7 +2256,10 @@ export class OmniStore {
     if (isSupabaseConfigured && supabase) {
       await supabase.from('financial_goals').delete().eq('id', id);
     }
-    const currentGoals = this.get<FinancialGoal[]>('financial_goals', defaultFinancialGoals);
+    const currentGoals = this.get<FinancialGoal[]>(
+      'financial_goals',
+      defaultFinancialGoals
+    );
     this.set(
       'financial_goals',
       currentGoals.filter((g) => g.id !== id)
@@ -1757,7 +2304,10 @@ export class OmniStore {
           return normalized;
         }
       } catch (err) {
-        console.error('Erro ao buscar financial_goal_contributions no Supabase:', err);
+        console.error(
+          'Erro ao buscar financial_goal_contributions no Supabase:',
+          err
+        );
       }
     }
 
@@ -1774,7 +2324,10 @@ export class OmniStore {
     amount: number;
     contribution_date?: string;
     notes?: string | null;
-  }): Promise<{ contribution: FinancialGoalContribution; updatedGoal: FinancialGoal }> {
+  }): Promise<{
+    contribution: FinancialGoalContribution;
+    updatedGoal: FinancialGoal;
+  }> {
     const nowIso = new Date().toISOString();
     const authUserId = await this.getAuthenticatedUserId();
     const numericAmount = Math.abs(Number(input.amount || 0));
@@ -1790,7 +2343,10 @@ export class OmniStore {
     }
 
     const delta = input.type === 'deposit' ? numericAmount : -numericAmount;
-    const newCurrentAmount = Math.max(0, Number((targetGoal.current_amount + delta).toFixed(2)));
+    const newCurrentAmount = Math.max(
+      0,
+      Number((targetGoal.current_amount + delta).toFixed(2))
+    );
 
     const newContribution: FinancialGoalContribution = {
       id: generateUUID(),
@@ -1829,21 +2385,32 @@ export class OmniStore {
     return { contribution: newContribution, updatedGoal };
   }
 
-  static async deleteFinancialGoalContribution(contributionId: string): Promise<void> {
+  static async deleteFinancialGoalContribution(
+    contributionId: string
+  ): Promise<void> {
     const allContribs = await this.getFinancialGoalContributions();
     const target = allContribs.find((c) => c.id === contributionId);
 
     if (isSupabaseConfigured && supabase) {
-      await supabase.from('financial_goal_contributions').delete().eq('id', contributionId);
+      await supabase
+        .from('financial_goal_contributions')
+        .delete()
+        .eq('id', contributionId);
     }
 
     if (target) {
       const goals = await this.getFinancialGoals();
       const goal = goals.find((g) => g.id === target.goal_id);
       if (goal) {
-        const reverseDelta = target.type === 'deposit' ? -target.amount : target.amount;
-        const recalculated = Math.max(0, Number((goal.current_amount + reverseDelta).toFixed(2)));
-        await this.updateFinancialGoal(goal.id, { current_amount: recalculated });
+        const reverseDelta =
+          target.type === 'deposit' ? -target.amount : target.amount;
+        const recalculated = Math.max(
+          0,
+          Number((goal.current_amount + reverseDelta).toFixed(2))
+        );
+        await this.updateFinancialGoal(goal.id, {
+          current_amount: recalculated,
+        });
       }
     }
 
@@ -1878,11 +2445,17 @@ export class OmniStore {
         console.error('Erro ao buscar financial_vision_plans no Supabase:', err);
       }
     }
-    return this.get<FinancialVisionPlan[]>('financial_vision_plans', defaultFinancialVisionPlans);
+    return this.get<FinancialVisionPlan[]>(
+      'financial_vision_plans',
+      defaultFinancialVisionPlans
+    );
   }
 
   static async addFinancialVisionPlan(
-    input: Omit<FinancialVisionPlan, 'id' | 'user_id' | 'created_at' | 'updated_at'>
+    input: Omit<
+      FinancialVisionPlan,
+      'id' | 'user_id' | 'created_at' | 'updated_at'
+    >
   ): Promise<FinancialVisionPlan> {
     const nowIso = new Date().toISOString();
     const authUserId = await this.getAuthenticatedUserId();
@@ -1894,7 +2467,9 @@ export class OmniStore {
       horizon: input.horizon,
       target_year: input.target_year ? Number(input.target_year) : null,
       target_amount:
-        input.target_amount !== null && input.target_amount !== undefined && input.target_amount > 0
+        input.target_amount !== null &&
+        input.target_amount !== undefined &&
+        input.target_amount > 0
           ? Number(input.target_amount)
           : null,
       content: input.content.trim(),
@@ -1958,8 +2533,12 @@ export class OmniStore {
     const updatedPlan: FinancialVisionPlan = {
       ...existing,
       ...updates,
-      title: updates.title !== undefined ? updates.title.trim() : existing.title,
-      content: updates.content !== undefined ? updates.content.trim() : existing.content,
+      title:
+        updates.title !== undefined ? updates.title.trim() : existing.title,
+      content:
+        updates.content !== undefined
+          ? updates.content.trim()
+          : existing.content,
       target_year:
         updates.target_year !== undefined
           ? updates.target_year
@@ -2009,13 +2588,3 @@ export class OmniStore {
     );
   }
 }
-
-const defaultMockExams: MockExam[] = [];
-const defaultErrorNotebook: ErrorNotebookItem[] = [];
-const defaultScheduledReviews: ScheduledReview[] = [];
-const defaultFinancialTransactions: FinancialTransaction[] = [];
-const defaultFinancialGoals: FinancialGoal[] = [];
-const defaultFinancialGoalContributions: FinancialGoalContribution[] = [];
-const defaultFinancialVisionPlans: FinancialVisionPlan[] = [];
-
-

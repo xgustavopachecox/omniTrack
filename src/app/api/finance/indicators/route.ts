@@ -13,8 +13,12 @@ const FALLBACK_INDICATORS: BrazilFinanceIndicators = {
 };
 
 export async function GET() {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5000);
+
   try {
     const response = await fetch('https://brasilapi.com.br/api/taxas/v1', {
+      signal: controller.signal,
       next: { revalidate: 43200 },
       headers: {
         Accept: 'application/json',
@@ -71,5 +75,7 @@ export async function GET() {
       },
       { status: 200 }
     );
+  } finally {
+    clearTimeout(timeoutId);
   }
 }

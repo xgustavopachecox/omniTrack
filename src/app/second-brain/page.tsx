@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { OmniStore } from '@/lib/store';
 import { SecondBrainNote, NoteCategory } from '@/lib/types';
 import {
@@ -9,6 +9,7 @@ import {
   Tag,
   Search,
   Trash2,
+  Edit2,
   BookOpen,
   Lightbulb,
   Dumbbell,
@@ -31,25 +32,60 @@ export default function SecondBrainPage() {
   const [activeTab, setActiveTab] = useState<'all' | NoteCategory>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
+  const [editingNote, setEditingNote] = useState<SecondBrainNote | null>(null);
 
-  // Form State for Quick Capture
+  // Form State for Inline Capture
   const [newTitle, setNewTitle] = useState<string>('');
   const [newCategory, setNewCategory] = useState<NoteCategory>('pensamentos');
   const [newContent, setNewContent] = useState<string>('');
   const [newTagsStr, setNewTagsStr] = useState<string>('');
+
+  // Form State for Modal (Create or Edit)
+  const [modalTitle, setModalTitle] = useState<string>('');
+  const [modalCategory, setModalCategory] = useState<NoteCategory>('pensamentos');
+  const [modalContent, setModalContent] = useState<string>('');
+  const [modalTagsStr, setModalTagsStr] = useState<string>('');
+
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  const loadNotes = async () => {
-    const data = await OmniStore.getNotes();
-    setNotes(data);
-  };
+  const loadNotes = useCallback(async () => {
+    try {
+      const data = await OmniStore.getNotes();
+      setNotes(data);
+    } catch (err) {
+      console.error('Erro ao carregar notas:', err);
+    }
+  }, []);
 
   useEffect(() => {
     loadNotes();
-  }, []);
+  }, [loadNotes]);
 
-  const handleCreateNote = async (e: React.FormEvent) => {
+  const showToast = (msg: string) => {
+    setStatusMessage(msg);
+    setTimeout(() => setStatusMessage(null), 3500);
+  };
+
+  const handleOpenQuickCapture = () => {
+    setEditingNote(null);
+    setModalTitle('');
+    setModalCategory('pensamentos');
+    setModalContent('');
+    setModalTagsStr('');
+    setIsModalOpen(true);
+  };
+
+  const handleOpenEditModal = (note: SecondBrainNote) => {
+    setEditingNote(note);
+    setModalTitle(note.title);
+    setModalCategory(note.category);
+    setModalContent(note.content);
+    setModalTagsStr((note.tags || []).join(', '));
+    setIsModalOpen(true);
+  };
+
+  const handleCreateInlineNote = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle.trim() || !newContent.trim() || isSaving) return;
 
@@ -70,10 +106,47 @@ export default function SecondBrainPage() {
       setNewTitle('');
       setNewContent('');
       setNewTagsStr('');
-      setIsModalOpen(false);
       await loadNotes();
-      setStatusMessage('Nota adicionada ao Segundo Cérebro!');
-      setTimeout(() => setStatusMessage(null), 3000);
+      showToast('Nota adicionada ao Segundo Cérebro!');
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSaveModalNote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!modalTitle.trim() || !modalContent.trim() || isSaving) return;
+
+    setIsSaving(true);
+    try {
+      const tags = modalTagsStr
+        .split(',')
+        .map((t) => t.trim().toLowerCase())
+        .filter(Boolean);
+
+      if (editingNote) {
+        await OmniStore.updateNote(editingNote.id, {
+          title: modalTitle.trim(),
+          category: modalCategory,
+          content: modalContent.trim(),
+          tags,
+        });
+        showToast('Nota atualizada com sucesso!');
+      } else {
+        await OmniStore.addNote({
+          title: modalTitle.trim(),
+          category: modalCategory,
+          content: modalContent.trim(),
+          tags,
+        });
+        showToast('Nota adicionada ao Segundo Cérebro!');
+      }
+
+      setIsModalOpen(false);
+      setEditingNote(null);
+      await loadNotes();
     } catch (err) {
       console.error(err);
     } finally {
@@ -82,8 +155,11 @@ export default function SecondBrainPage() {
   };
 
   const handleDelete = async (id: string) => {
-    await OmniStore.deleteNote(id);
-    await loadNotes();
+    if (confirm('Deseja realmente excluir esta nota?')) {
+      await OmniStore.deleteNote(id);
+      await loadNotes();
+      showToast('Nota excluída.');
+    }
   };
 
   // Filtered Notes
@@ -95,7 +171,7 @@ export default function SecondBrainPage() {
         !q ||
         n.title.toLowerCase().includes(q) ||
         n.content.toLowerCase().includes(q) ||
-        n.tags.some((tag) => tag.toLowerCase().includes(q));
+        (n.tags || []).some((tag) => tag.toLowerCase().includes(q));
       return matchesCategory && matchesSearch;
     });
   }, [notes, activeTab, searchQuery]);
@@ -137,7 +213,7 @@ export default function SecondBrainPage() {
 
         {/* Quick Capture Button */}
         <button
-          onClick={() => setIsModalOpen(true)}
+          onClick={handleOpenQuickCapture}
           className="px-5 py-3 rounded-xl bg-gradient-to-r from-violet-600 via-indigo-600 to-cyan-500 text-white font-bold text-xs flex items-center gap-2 hover:opacity-90 transition shadow-lg shadow-violet-500/20"
         >
           <Plus className="h-4 w-4" />
@@ -147,7 +223,7 @@ export default function SecondBrainPage() {
 
       {/* Toast Notification */}
       {statusMessage && (
-        <div className="p-3 rounded-xl bg-violet-950/60 border border-violet-500/40 text-violet-300 text-xs font-medium flex items-center gap-2 animate-bounce">
+        <div className="p-3 rounded-xl bg-violet-950/60 border border-violet-500/40 text-violet-300 text-xs font-medium flex items-center gap-2">
           <CheckCircle2 className="h-4 w-4 text-violet-400" />
           <span>{statusMessage}</span>
         </div>
@@ -163,10 +239,12 @@ export default function SecondBrainPage() {
           <span className="text-[11px] text-slate-400">Inserção Rápida</span>
         </div>
 
-        <form onSubmit={handleCreateNote} className="space-y-4">
+        <form onSubmit={handleCreateInlineNote} className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="md:col-span-2">
-              <label className="text-xs font-semibold text-slate-300 block mb-1">Título da Nota</label>
+              <label className="text-xs font-semibold text-slate-300 block mb-1">
+                Título da Nota
+              </label>
               <input
                 type="text"
                 placeholder="Ex: Estratégia de progressão de carga ou Reflexão sobre rotina..."
@@ -178,7 +256,9 @@ export default function SecondBrainPage() {
             </div>
 
             <div>
-              <label className="text-xs font-semibold text-slate-300 block mb-1">Categoria</label>
+              <label className="text-xs font-semibold text-slate-300 block mb-1">
+                Categoria
+              </label>
               <select
                 value={newCategory}
                 onChange={(e) => setNewCategory(e.target.value as NoteCategory)}
@@ -234,7 +314,6 @@ export default function SecondBrainPage() {
 
       {/* Category Tabs & Search Bar */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
-        {/* Category Tabs */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
           {categories.map((cat) => {
             const Icon = cat.icon;
@@ -256,7 +335,6 @@ export default function SecondBrainPage() {
           })}
         </div>
 
-        {/* Search Input */}
         <div className="relative min-w-[240px]">
           <Search className="h-4 w-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
@@ -269,11 +347,13 @@ export default function SecondBrainPage() {
         </div>
       </div>
 
-      {/* Cards Grid (Masonry Style layout) */}
+      {/* Cards Grid */}
       {filteredNotes.length === 0 ? (
         <div className="glass-card p-12 rounded-2xl text-center text-slate-500 space-y-3">
           <Brain className="h-12 w-12 mx-auto text-slate-600 opacity-40" />
-          <p className="text-base font-semibold text-slate-400">Seu Second Brain está vazio. Crie sua primeira nota rápida.</p>
+          <p className="text-base font-semibold text-slate-400">
+            Seu Second Brain está vazio. Crie sua primeira nota rápida.
+          </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -291,43 +371,55 @@ export default function SecondBrainPage() {
                   >
                     {note.category}
                   </span>
-                  <button
-                    onClick={() => handleDelete(note.id)}
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-slate-800 text-slate-500 hover:text-red-400 transition"
-                    title="Excluir nota"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => handleOpenEditModal(note)}
+                      className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-cyan-400 transition"
+                      title="Editar nota"
+                    >
+                      <Edit2 className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(note.id)}
+                      className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-red-400 transition"
+                      title="Excluir nota"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 </div>
 
-                <h3 className="font-bold text-white text-base leading-snug">{note.title}</h3>
+                <h3 className="font-bold text-white text-base leading-snug">
+                  {note.title}
+                </h3>
                 <p className="text-xs text-slate-300 whitespace-pre-line leading-relaxed">
                   {note.content}
                 </p>
               </div>
 
               <div className="pt-3 border-t border-slate-800/80 space-y-2">
-                {/* Tags */}
-                {note.tags.length > 0 && (
+                {note.tags && note.tags.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
                     {note.tags.map((tag, idx) => (
                       <span
                         key={idx}
                         className="px-2 py-0.5 rounded bg-slate-800/80 text-slate-400 text-[10px] font-medium flex items-center gap-1"
                       >
-                        <Tag className="h-2.5 w-2.5 text-slate-500" />
-                        #{tag}
+                        <Tag className="h-2.5 w-2.5 text-slate-500" />#{tag}
                       </span>
                     ))}
                   </div>
                 )}
 
                 <p className="text-[10px] text-slate-500">
-                  {new Date(note.created_at).toLocaleDateString('pt-BR', {
-                    day: '2-digit',
-                    month: 'short',
-                    year: 'numeric',
-                  })}
+                  {new Date(note.updated_at || note.created_at).toLocaleDateString(
+                    'pt-BR',
+                    {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric',
+                    }
+                  )}
                 </p>
               </div>
             </div>
@@ -335,31 +427,38 @@ export default function SecondBrainPage() {
         </div>
       )}
 
-      {/* Quick Capture Modal Drawer */}
+      {/* Quick Capture & Edit Modal Drawer */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-2xl p-6 space-y-5 shadow-2xl relative animate-scaleUp">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Sparkles className="h-5 w-5 text-violet-400" />
-                <h3 className="font-bold text-white text-lg">Captura Rápida de Pensamento</h3>
+                <h3 className="font-bold text-white text-lg">
+                  {editingNote ? 'Editar Nota' : 'Captura Rápida de Pensamento'}
+                </h3>
               </div>
               <button
-                onClick={() => setIsModalOpen(false)}
+                onClick={() => {
+                  setIsModalOpen(false);
+                  setEditingNote(null);
+                }}
                 className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <form onSubmit={handleCreateNote} className="space-y-4">
+            <form onSubmit={handleSaveModalNote} className="space-y-4">
               <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">Título</label>
+                <label className="text-xs font-semibold text-slate-300 block mb-1">
+                  Título
+                </label>
                 <input
                   type="text"
                   placeholder="Ex: Protocolo de Sobrecarga Progressiva..."
-                  value={newTitle}
-                  onChange={(e) => setNewTitle(e.target.value)}
+                  value={modalTitle}
+                  onChange={(e) => setModalTitle(e.target.value)}
                   required
                   className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-violet-500"
                 />
@@ -367,10 +466,14 @@ export default function SecondBrainPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-semibold text-slate-300 block mb-1">Categoria</label>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">
+                    Categoria
+                  </label>
                   <select
-                    value={newCategory}
-                    onChange={(e) => setNewCategory(e.target.value as NoteCategory)}
+                    value={modalCategory}
+                    onChange={(e) =>
+                      setModalCategory(e.target.value as NoteCategory)
+                    }
                     className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-violet-500"
                   >
                     <option value="treino">Treino</option>
@@ -387,20 +490,22 @@ export default function SecondBrainPage() {
                   <input
                     type="text"
                     placeholder="Ex: foco, nutricao, hipertrofia"
-                    value={newTagsStr}
-                    onChange={(e) => setNewTagsStr(e.target.value)}
+                    value={modalTagsStr}
+                    onChange={(e) => setModalTagsStr(e.target.value)}
                     className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-violet-500"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">Conteúdo da Nota</label>
+                <label className="text-xs font-semibold text-slate-300 block mb-1">
+                  Conteúdo da Nota
+                </label>
                 <textarea
-                  rows={4}
+                  rows={5}
                   placeholder="Escreva sua reflexão, síntese ou ideia rápida..."
-                  value={newContent}
-                  onChange={(e) => setNewContent(e.target.value)}
+                  value={modalContent}
+                  onChange={(e) => setModalContent(e.target.value)}
                   required
                   className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-violet-500 resize-none"
                 />
@@ -409,17 +514,24 @@ export default function SecondBrainPage() {
               <div className="flex justify-end gap-3 pt-2">
                 <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={() => {
+                    setIsModalOpen(false);
+                    setEditingNote(null);
+                  }}
                   className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold hover:bg-slate-700 transition"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  disabled={isSaving || !newTitle.trim() || !newContent.trim()}
+                  disabled={isSaving || !modalTitle.trim() || !modalContent.trim()}
                   className="px-5 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 text-white text-xs font-bold hover:opacity-90 transition shadow-lg shadow-violet-500/20 disabled:opacity-40"
                 >
-                  {isSaving ? 'Salvar...' : 'Salvar Nota'}
+                  {isSaving
+                    ? 'Salvando...'
+                    : editingNote
+                    ? 'Salvar Alterações'
+                    : 'Salvar Nota'}
                 </button>
               </div>
             </form>

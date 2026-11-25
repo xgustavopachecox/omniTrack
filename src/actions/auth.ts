@@ -32,6 +32,28 @@ export type ActionResponse = {
   message?: string;
 };
 
+function getRequestOrigin(headersList: Headers): string {
+  const originHeader = headersList.get('origin');
+  if (originHeader && originHeader.startsWith('http')) {
+    return originHeader.replace(/\/+$/, '');
+  }
+  const forwardedHost = headersList.get('x-forwarded-host');
+  const host = forwardedHost || headersList.get('host') || '';
+  if (host) {
+    const protocol =
+      headersList.get('x-forwarded-proto') ||
+      (host.includes('localhost') || host.startsWith('127.0.0.1') ? 'http' : 'https');
+    return `${protocol}://${host}`;
+  }
+  if (process.env.NEXT_PUBLIC_SITE_URL) {
+    return process.env.NEXT_PUBLIC_SITE_URL.replace(/\/+$/, '');
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+  return '';
+}
+
 // Formata erros de rede, DNS e Supabase em mensagens claras em português
 function formatSupabaseError(error: any): string {
   if (!error) return '';
@@ -48,7 +70,8 @@ function formatSupabaseError(error: any): string {
     lowerMsg.includes('supabase não configurado') ||
     error.status === 0
   ) {
-    return 'Não foi possível conectar ao Supabase. O domínio da URL (https://nfgolpxkfqvpxbkwmtyk.supabase.co) não foi encontrado na internet. Verifique se a URL do projeto no Supabase está correta e se o projeto está ativo.';
+    const configuredUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'NEXT_PUBLIC_SUPABASE_URL';
+    return `Não foi possível conectar ao Supabase (${configuredUrl}). Verifique se a URL e a chave do projeto no Supabase estão corretas e ativas.`;
   }
 
   if (lowerMsg.includes('already registered') || lowerMsg.includes('user_already_exists')) {
@@ -125,9 +148,7 @@ export async function signUp(
 
   try {
     const headersList = await headers();
-    const host = headersList.get('host') || 'localhost:3000';
-    const protocol = headersList.get('x-forwarded-proto') || (host.includes('localhost') ? 'http' : 'https');
-    const origin = `${protocol}://${host}`;
+    const origin = getRequestOrigin(headersList);
 
     const supabase = await createClient();
     const { data, error } = await supabase.auth.signUp({
@@ -162,9 +183,7 @@ export async function signUp(
 export async function signInWithGoogle() {
   try {
     const headersList = await headers();
-    const host = headersList.get('host') || 'localhost:3000';
-    const protocol = headersList.get('x-forwarded-proto') || (host.includes('localhost') ? 'http' : 'https');
-    const origin = `${protocol}://${host}`;
+    const origin = getRequestOrigin(headersList);
 
     const supabase = await createClient();
     const { data, error } = await supabase.auth.signInWithOAuth({
@@ -216,9 +235,7 @@ export async function resetPassword(
 
   try {
     const headersList = await headers();
-    const host = headersList.get('host') || 'localhost:3000';
-    const protocol = headersList.get('x-forwarded-proto') || (host.includes('localhost') ? 'http' : 'https');
-    const origin = `${protocol}://${host}`;
+    const origin = getRequestOrigin(headersList);
 
     const supabase = await createClient();
     const { error } = await supabase.auth.resetPasswordForEmail(email, {

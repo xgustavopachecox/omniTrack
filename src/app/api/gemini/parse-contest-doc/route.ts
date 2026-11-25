@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
-import { generateContentWithRetry, handleGeminiApiError } from '@/lib/gemini';
+import {
+  generateContentWithRetry,
+  handleGeminiApiError,
+  parseGeminiJson,
+  PRIMARY_GEMINI_MODEL,
+} from '@/lib/gemini';
+
+const MAX_VERCEL_PDF_BYTES = 4.5 * 1024 * 1024; // 4.5 MB limite da Vercel Serverless
 
 const tafReqSchema = z.object({
   modality: z.string(),
@@ -28,7 +35,7 @@ const parseEditalResponseSchema = z.object({
 export async function POST(req: NextRequest) {
   try {
     let pdfBase64: string | null = null;
-    let pdfMimeType = 'application/pdf';
+    const pdfMimeType = 'application/pdf';
     let rawText: string | null = null;
     let targetRoles = 'Cargos Principais do Edital';
 
@@ -46,24 +53,66 @@ export async function POST(req: NextRequest) {
         rawText = textInput.trim();
       }
 
-      const file = formData.get('file') || formData.get('pdf') || formData.get('editalPdf');
-      if (file && file instanceof Blob) {
-        if (file.type) pdfMimeType = file.type;
+      const file =
+        formData.get('file') || formData.get('pdf') || formData.get('editalPdf');
+      if (file && file instanceof Blob && file.size > 0) {
+        if (file.size > MAX_VERCEL_PDF_BYTES) {
+          return NextResponse.json(
+            {
+              error:
+                'O arquivo PDF excede o limite de 4.5 MB da Vercel. Envie um PDF menor (com apenas as páginas do conteúdo programático) ou cole o texto do edital.',
+            },
+            { status: 413 }
+          );
+        }
+
+        const fileName =
+          'name' in file && typeof (file as File).name === 'string'
+            ? (file as File).name.toLowerCase()
+            : '';
+        const rawMime = (file.type || '').toLowerCase();
+        const isValidPdf =
+          fileName.endsWith('.pdf') ||
+          rawMime.includes('pdf') ||
+          rawMime === 'application/octet-stream' ||
+          rawMime === '';
+
+        if (!isValidPdf) {
+          return NextResponse.json(
+            {
+              error:
+                'Formato de arquivo inválido. Por favor, selecione um arquivo com extensão .pdf válido.',
+            },
+            { status: 400 }
+          );
+        }
+
         const arrayBuffer = await file.arrayBuffer();
         pdfBase64 = Buffer.from(arrayBuffer).toString('base64');
       }
     } else {
       const body = await req.json().catch(() => ({}));
-      if (body.target_roles || body.targetRoles) targetRoles = body.target_roles || body.targetRoles;
-      if (body.raw_text || body.rawText) rawText = body.raw_text || body.rawText;
-      if (body.pdfBase64 || body.file || body.pdf || body.editalPdf) {
-        pdfBase64 = body.pdfBase64 || body.file || body.pdf || body.editalPdf;
+      if (body.target_roles || body.targetRoles) {
+        targetRoles = body.target_roles || body.targetRoles;
+      }
+      if (body.raw_text || body.rawText) {
+        rawText = body.raw_text || body.rawText;
+      }
+      const rawPdfStr =
+        body.pdfBase64 || body.file || body.pdf || body.editalPdf;
+      if (typeof rawPdfStr === 'string' && rawPdfStr.trim()) {
+        pdfBase64 = rawPdfStr.includes(';base64,')
+          ? rawPdfStr.split(';base64,')[1]
+          : rawPdfStr.trim();
       }
     }
 
     if (!pdfBase64 && !rawText) {
       return NextResponse.json(
-        { error: 'É necessário fornecer um arquivo PDF do edital ou colar o texto bruto.' },
+        {
+          error:
+            'É necessário fornecer um arquivo PDF do edital ou colar o texto bruto.',
+        },
         { status: 400 }
       );
     }
@@ -71,8 +120,10 @@ export async function POST(req: NextRequest) {
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey || apiKey === 'your_google_ai_studio_gemini_api_key') {
-      // Heuristic fallback response when GEMINI_API_KEY is not set
-      const sampleTitle = targetRoles.length > 25 ? `${targetRoles.substring(0, 25)}...` : targetRoles;
+      const sampleTitle =
+        targetRoles.length > 25
+          ? `${targetRoles.substring(0, 25)}...`
+          : targetRoles;
       return NextResponse.json({
         contest_title: `Concurso Público - ${sampleTitle}`,
         institution: 'Cebraspe / FGV',
@@ -82,12 +133,16 @@ export async function POST(req: NextRequest) {
         summary_points: [
           'Vagas: 200 imediatas + Cadastro de Reserva',
           'Fases: Prova Objetiva + Redação Discursiva + TAF',
-          'Regime: Estatutário com estabilidade após estágio probatório'
+          'Regime: Estatutário com estabilidade após estágio probatório',
         ],
         taf_requirements: [
-          { modality: 'Corrida de 12 minutos', target_value: 2400.0, unit: 'metros' },
+          {
+            modality: 'Corrida de 12 minutos',
+            target_value: 2400.0,
+            unit: 'metros',
+          },
           { modality: 'Barra Fixa', target_value: 5.0, unit: 'reps' },
-          { modality: 'Abdominal Remador', target_value: 30.0, unit: 'reps' }
+          { modality: 'Abdominal Remador', target_value: 30.0, unit: 'reps' },
         ],
         syllabus: [
           {
@@ -97,8 +152,8 @@ export async function POST(req: NextRequest) {
               'Tipologia e estruturação textual',
               'Ortografia oficial e acentuação gráfica',
               'Sintaxe da oração e do período',
-              'Emprego do sinal indicativo de crase'
-            ]
+              'Emprego do sinal indicativo de crase',
+            ],
           },
           {
             subject_name: 'Direito Constitucional',
@@ -106,8 +161,8 @@ export async function POST(req: NextRequest) {
               'Direitos e garantias fundamentais (Art. 5º)',
               'Nacionalidade e direitos políticos',
               'Organização do Estado e Administração Pública',
-              'Poder Executivo e Segurança Pública (Art. 144)'
-            ]
+              'Poder Executivo e Segurança Pública (Art. 144)',
+            ],
           },
           {
             subject_name: 'Direito Administrativo',
@@ -115,18 +170,18 @@ export async function POST(req: NextRequest) {
               'Princípios da Administração Pública (LIMPE)',
               'Atos Administrativos: conceitos, atributos e espécies',
               'Licitações e Contratos Administrativos (Lei 14.133/21)',
-              'Agentes Públicos e Responsabilidade Civil do Estado'
-            ]
+              'Agentes Públicos e Responsabilidade Civil do Estado',
+            ],
           },
           {
             subject_name: 'Raciocínio Lógico & Matemática',
             topics: [
               'Lógica proposicional e tabelas-verdade',
               'Diagramas lógicos e equivalências',
-              'Análise combinatória e probabilidade'
-            ]
-          }
-        ]
+              'Análise combinatória e probabilidade',
+            ],
+          },
+        ],
       });
     }
 
@@ -157,11 +212,6 @@ Retorne estritamente a saída formatada de acordo com o JSON Schema solicitado.`
       "modality": "Corrida de 12 minutos",
       "target_value": 2400.0,
       "unit": "metros"
-    },
-    {
-      "modality": "Barra Fixa",
-      "target_value": 5.0,
-      "unit": "reps"
     }
   ],
   "syllabus": [
@@ -170,17 +220,7 @@ Retorne estritamente a saída formatada de acordo com o JSON Schema solicitado.`
       "topics": [
         "Compreensão e interpretação de textos",
         "Tipologia textual",
-        "Ortografia oficial e acentuação gráfica",
-        "Emprego do sinal indicativo de crase",
-        "Sintaxe da oração e do período"
-      ]
-    },
-    {
-      "subject_name": "Direito Constitucional",
-      "topics": [
-        "Direitos e garantias fundamentais",
-        "Nacionalidade e direitos políticos",
-        "Organização do Estado e Poder Executivo"
+        "Ortografia oficial e acentuação gráfica"
       ]
     }
   ]
@@ -191,7 +231,7 @@ Retorne estritamente a saída formatada de acordo com o JSON Schema solicitado.`
     if (pdfBase64) {
       contents.push({
         inlineData: {
-          mimeType: pdfMimeType || 'application/pdf',
+          mimeType: pdfMimeType,
           data: pdfBase64,
         },
       });
@@ -201,19 +241,19 @@ Retorne estritamente a saída formatada de acordo com o JSON Schema solicitado.`
       contents.push({ text: `Texto bruto extraído do edital:\n${rawText}` });
     }
 
-    contents.push({ text: `Cargos selecionados pelo candidato: ${targetRoles}\n\n${jsonStructurePrompt}` });
+    contents.push({
+      text: `Cargos selecionados pelo candidato: ${targetRoles}\n\n${jsonStructurePrompt}`,
+    });
 
     const response = await generateContentWithRetry(ai, {
-      model: 'gemini-3.8-flash',
+      model: PRIMARY_GEMINI_MODEL,
       contents,
       config: {
         responseMimeType: 'application/json',
       },
     });
 
-    const responseText = response.text || '';
-    const cleanedJsonStr = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-    const parsed = JSON.parse(cleanedJsonStr);
+    const parsed = parseGeminiJson(response.text || '');
     const validated = parseEditalResponseSchema.parse(parsed);
 
     return NextResponse.json(validated);

@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
-import { generateContentWithRetry, handleGeminiApiError } from '@/lib/gemini';
+import {
+  generateContentWithRetry,
+  handleGeminiApiError,
+  parseGeminiJson,
+  PRIMARY_GEMINI_MODEL,
+} from '@/lib/gemini';
 
 const explainErrorSchema = z.object({
   ai_clarification: z.string(),
@@ -55,7 +60,7 @@ Instruções:
 Formate a resposta em JSON respeitando o schema.`;
 
     const response = await generateContentWithRetry(ai, {
-      model: 'gemini-3.8-flash',
+      model: PRIMARY_GEMINI_MODEL,
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
@@ -71,8 +76,7 @@ Formate a resposta em JSON respeitando o schema.`;
       },
     });
 
-    const responseText = response.text || '';
-    const parsedJson = JSON.parse(responseText);
+    const parsedJson = parseGeminiJson(response.text || '');
     const validatedData = explainErrorSchema.parse(parsedJson);
 
     return NextResponse.json(validatedData);

@@ -83,22 +83,26 @@ export default function NutritionPage() {
   const [formFats, setFormFats] = useState<number>(15);
 
   const loadData = async () => {
-    const [p, n, wt] = await Promise.all([
-      OmniStore.getProfile(),
-      OmniStore.getNutritionLogs(),
-      OmniStore.getWaterLogs(),
-    ]);
-    setProfile(p);
-    setLogs(n);
-    setWaterLogs(wt);
+    try {
+      const [p, n, wt] = await Promise.all([
+        OmniStore.getProfile(),
+        OmniStore.getNutritionLogs(),
+        OmniStore.getWaterLogs(),
+      ]);
+      setProfile(p);
+      setLogs(n);
+      setWaterLogs(wt);
 
-    const todayStr = new Date().toISOString().split('T')[0];
-    const todayWeekDetails = getISOWeekDetails(todayStr);
-    const todayWeekKey = `${todayWeekDetails.year}-W${todayWeekDetails.weekNum}`;
+      const todayStr = new Date().toISOString().split('T')[0];
+      const todayWeekDetails = getISOWeekDetails(todayStr);
+      const todayWeekKey = `${todayWeekDetails.year}-W${todayWeekDetails.weekNum}`;
 
-    // Expand today's week and day by default
-    setExpandedWeeks((prev) => ({ ...prev, [todayWeekKey]: true }));
-    setExpandedDays((prev) => ({ ...prev, [todayStr]: true }));
+      // Expand today's week and day by default
+      setExpandedWeeks((prev) => ({ ...prev, [todayWeekKey]: true }));
+      setExpandedDays((prev) => ({ ...prev, [todayStr]: true }));
+    } catch (err) {
+      console.error('Erro ao carregar dados de nutrição:', err);
+    }
   };
 
   useEffect(() => {

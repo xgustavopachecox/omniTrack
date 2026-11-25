@@ -176,38 +176,80 @@ export default function ContestsPage() {
 
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  // Load All Multi-Contest & Evaluation Suite Data
-  const loadAllData = async () => {
-    const loadedContests = await OmniStore.getContests();
-    setContests(loadedContests);
+  // Load All Multi-Contest & Evaluation Suite Data in parallel
+  const loadAllData = async (overrideContestId?: string) => {
+    try {
+      const loadedContests = await OmniStore.getContests();
+      setContests(loadedContests);
 
-    let activeId = selectedContestId;
-    if (!activeId || !loadedContests.some((c) => c.id === activeId)) {
-      const activeContest = loadedContests.find((c) => c.is_active) || loadedContests[0];
-      activeId = activeContest ? activeContest.id : '';
-      setSelectedContestId(activeId);
-    }
+      let activeId = overrideContestId ?? selectedContestId;
+      if (!activeId || !loadedContests.some((c) => c.id === activeId)) {
+        const activeContest =
+          loadedContests.find((c) => c.is_active) || loadedContests[0];
+        activeId = activeContest ? activeContest.id : '';
+        if (activeId !== selectedContestId) {
+          setSelectedContestId(activeId);
+        }
+      }
 
-    if (activeId) {
-      const loadedSubjects = await OmniStore.getContestSubjects(activeId);
-      const loadedSessions = await OmniStore.getStudySessions(activeId);
-      const loadedTafReqs = await OmniStore.getContestTafRequirements(activeId);
-      const loadedExams = await OmniStore.getMockExams(activeId);
-      const loadedErrors = await OmniStore.getErrorNotebook(activeId);
-      const loadedSRS = await OmniStore.getScheduledReviews(activeId);
+      if (activeId) {
+        const [
+          loadedSubjects,
+          loadedSessions,
+          loadedTafReqs,
+          loadedExams,
+          loadedErrors,
+          loadedSRS,
+        ] = await Promise.all([
+          OmniStore.getContestSubjects(activeId),
+          OmniStore.getStudySessions(activeId),
+          OmniStore.getContestTafRequirements(activeId),
+          OmniStore.getMockExams(activeId),
+          OmniStore.getErrorNotebook(activeId),
+          OmniStore.getScheduledReviews(activeId),
+        ]);
 
-      setSubjects(loadedSubjects);
-      setStudySessions(loadedSessions);
-      setTafRequirements(loadedTafReqs);
-      setMockExams(loadedExams);
-      setErrorNotebook(loadedErrors);
-      setScheduledReviews(loadedSRS);
+        setSubjects(loadedSubjects);
+        setStudySessions(loadedSessions);
+        setTafRequirements(loadedTafReqs);
+        setMockExams(loadedExams);
+        setErrorNotebook(loadedErrors);
+        setScheduledReviews(loadedSRS);
+      } else {
+        setSubjects([]);
+        setStudySessions([]);
+        setTafRequirements([]);
+        setMockExams([]);
+        setErrorNotebook([]);
+        setScheduledReviews([]);
+      }
+    } catch (err) {
+      console.error('Erro ao carregar dados de concursos:', err);
     }
   };
 
   useEffect(() => {
     loadAllData();
   }, [selectedContestId]);
+
+  const playTimerSound = () => {
+    try {
+      if (typeof window === 'undefined') return;
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.2);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 1.2);
+    } catch {}
+  };
 
   // Active Simulado Timer Effect
   useEffect(() => {
@@ -241,28 +283,12 @@ export default function ContestsPage() {
   };
 
   const handleSelectContest = async (id: string) => {
-    setSelectedContestId(id);
     await OmniStore.setActiveContest(id);
-    await loadAllData();
-  };
-
-  const playTimerSound = () => {
-    try {
-      if (typeof window === 'undefined') return;
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioCtx) return;
-      const ctx = new AudioCtx();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(880, ctx.currentTime);
-      gain.gain.setValueAtTime(0.3, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.2);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 1.2);
-    } catch {}
+    if (selectedContestId === id) {
+      await loadAllData(id);
+    } else {
+      setSelectedContestId(id);
+    }
   };
 
   const startPomodoro = (minutes: number) => {
@@ -307,6 +333,25 @@ export default function ContestsPage() {
         throw new Error('Por favor, selecione um arquivo PDF do edital ou cole o conteúdo programático.');
       }
 
+      if (importFile) {
+        const maxBytes = 4.5 * 1024 * 1024;
+        if (importFile.size > maxBytes) {
+          throw new Error(
+            'O arquivo PDF excede o limite de 4.5 MB da Vercel. Envie um PDF menor (apenas com as páginas do conteúdo programático) ou cole o texto abaixo.'
+          );
+        }
+        const fileName = importFile.name.toLowerCase();
+        const fileMime = (importFile.type || '').toLowerCase();
+        const isPdf =
+          fileName.endsWith('.pdf') ||
+          fileMime.includes('pdf') ||
+          fileMime === 'application/octet-stream' ||
+          fileMime === '';
+        if (!isPdf) {
+          throw new Error('Selecione um arquivo com extensão .pdf válido.');
+        }
+      }
+
       const formData = new FormData();
       if (importFile) {
         formData.append('file', importFile);
@@ -319,6 +364,7 @@ export default function ContestsPage() {
       formData.append('target_roles', importTargetRoles);
       formData.append('targetRoles', importTargetRoles);
 
+      // Envia FormData sem header Content-Type manual para preservar o boundary multipart
       const res = await fetch('/api/gemini/parse-contest-doc', {
         method: 'POST',
         body: formData,
@@ -2173,14 +2219,33 @@ export default function ContestsPage() {
 
             <form onSubmit={handleParseEdital} className="space-y-4">
               <div>
-                <label className="text-xs text-slate-400 font-bold mb-1 block">Arquivo PDF do Edital</label>
+                <label className="text-xs text-slate-400 font-bold mb-1 block">
+                  Arquivo PDF do Edital (máx. 4.5 MB)
+                </label>
                 <input
                   type="file"
-                  accept="application/pdf"
+                  accept=".pdf,application/pdf"
                   onChange={(e) => {
                     const file = e.target.files?.[0] || null;
+                    if (file) {
+                      const isPdf =
+                        file.name.toLowerCase().endsWith('.pdf') ||
+                        (file.type || '').toLowerCase().includes('pdf');
+                      if (!isPdf) {
+                        setImportError('Formato inválido. Selecione um arquivo .pdf.');
+                        setImportFile(null);
+                        return;
+                      }
+                      if (file.size > 4.5 * 1024 * 1024) {
+                        setImportError(
+                          `O arquivo selecionado (${(file.size / 1024 / 1024).toFixed(2)} MB) ultrapassa o limite de 4.5 MB da Vercel. Envie um PDF menor ou cole o conteúdo programático abaixo.`
+                        );
+                        setImportFile(null);
+                        return;
+                      }
+                      setImportError(null);
+                    }
                     setImportFile(file);
-                    if (file) setImportError(null);
                   }}
                   className="w-full text-xs text-slate-400 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-slate-800 file:text-cyan-400 hover:file:bg-slate-700 cursor-pointer"
                 />

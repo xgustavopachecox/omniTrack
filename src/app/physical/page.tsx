@@ -98,13 +98,18 @@ export default function PhysicalPage() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   const loadData = async () => {
-    const weightData = await OmniStore.getBodyMetrics();
-    setMetrics(weightData);
-
-    const assessmentData = await OmniStore.getPhysiqueAssessments();
-    setAssessments(assessmentData);
-    if (assessmentData.length > 0 && !selectedAssessment) {
-      setSelectedAssessment(assessmentData[0]);
+    try {
+      const [weightData, assessmentData] = await Promise.all([
+        OmniStore.getBodyMetrics(),
+        OmniStore.getPhysiqueAssessments(),
+      ]);
+      setMetrics(weightData);
+      setAssessments(assessmentData);
+      if (assessmentData.length > 0 && !selectedAssessment) {
+        setSelectedAssessment(assessmentData[0]);
+      }
+    } catch (err) {
+      console.error('Erro ao carregar dados físicos:', err);
     }
   };
 
@@ -750,7 +755,7 @@ export default function PhysicalPage() {
             <form onSubmit={handleAddMetric} className="lg:col-span-2 glass-card p-6 rounded-3xl space-y-4">
               <h3 className="font-bold text-white text-base flex items-center gap-2">
                 <Plus className="h-4 w-4 text-cyan-400" />
-                Registrar Peso Corporall do Dia
+                Registrar Peso Corporal do Dia
               </h3>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

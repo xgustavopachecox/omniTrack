@@ -15,17 +15,32 @@ export function UserMenu() {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const supabase = createClient();
+    let subscription: { unsubscribe: () => void } | null = null;
 
-    // Fetch initial user
-    supabase.auth.getUser().then(({ data }) => {
-      setUser(data.user);
-    });
+    try {
+      const supabase = createClient();
 
-    // Listen for auth state changes
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
+      // Fetch initial user safely
+      supabase.auth
+        .getUser()
+        .then(({ data }) => {
+          setUser(data?.user ?? null);
+        })
+        .catch(() => {
+          setUser(null);
+        });
+
+      // Listen for auth state changes
+      const { data: authListener } = supabase.auth.onAuthStateChange(
+        (_event, session) => {
+          setUser(session?.user ?? null);
+        }
+      );
+      subscription = authListener.subscription;
+    } catch {
+      // Fallback when Supabase is not configured in local dev
+      setUser(null);
+    }
 
     // Close dropdown when clicking outside
     const handleClickOutside = (event: MouseEvent) => {
@@ -36,7 +51,7 @@ export function UserMenu() {
     document.addEventListener('mousedown', handleClickOutside);
 
     return () => {
-      authListener.subscription.unsubscribe();
+      if (subscription) subscription.unsubscribe();
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, []);

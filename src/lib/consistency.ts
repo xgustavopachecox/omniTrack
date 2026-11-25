@@ -79,7 +79,7 @@ export function calculateWeeklyStreak(sessions: WorkoutSession[], targetWorkouts
   const isCurrentWeekGoalMet = currentWeekWorkouts >= targetWorkoutsPerWeek;
 
   let streak = 0;
-  let checkDate = new Date();
+  const checkDate = new Date();
 
   // If current week goal is already met, count it
   if (isCurrentWeekGoalMet) {

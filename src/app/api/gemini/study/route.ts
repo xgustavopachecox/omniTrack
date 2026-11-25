@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
-import { generateContentWithRetry, handleGeminiApiError } from '@/lib/gemini';
+import {
+  generateContentWithRetry,
+  handleGeminiApiError,
+  parseGeminiJson,
+  PRIMARY_GEMINI_MODEL,
+} from '@/lib/gemini';
 
 const studyResponseSchema = z.object({
   mode: z.enum(['doubt', 'mnemonic', 'question']),
@@ -159,16 +164,14 @@ Analise a solicitação do candidato para o tópico "${topicName}" e forneça um
     });
 
     const response = await generateContentWithRetry(ai, {
-      model: 'gemini-3.8-flash',
+      model: PRIMARY_GEMINI_MODEL,
       contents,
       config: {
         responseMimeType: 'application/json',
       },
     });
 
-    const responseText = response.text || '';
-    const cleanedJsonStr = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-    const parsed = JSON.parse(cleanedJsonStr);
+    const parsed = parseGeminiJson(response.text || '');
     const validated = studyResponseSchema.parse(parsed);
 
     return NextResponse.json(validated);
