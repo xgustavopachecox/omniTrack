@@ -18,8 +18,13 @@ import {
   MockExamQuestion,
   ErrorNotebookItem,
   ScheduledReview,
+  FinancialTransaction,
+  FinancialGoal,
+  FinancialGoalContribution,
+  FinancialVisionPlan,
 } from './types';
 import { supabase, isSupabaseConfigured } from './supabase/client';
+import { generateUUID } from './finance';
 
 const DEMO_USER_ID = 'demo-user-omnitrack';
 
@@ -1403,10 +1408,614 @@ export class OmniStore {
       this.set('contest_subjects', updatedSubjects);
     }
   }
+
+  // ----------------------------------------------------
+  // MÓDULO FINANCEIRO (SUPABASE + FALLBACK LOCAL ZERADO)
+  // ----------------------------------------------------
+
+  private static async getAuthenticatedUserId(): Promise<string | null> {
+    if (!isSupabaseConfigured || !supabase) return null;
+    try {
+      const { data } = await supabase.auth.getUser();
+      return data?.user?.id || null;
+    } catch {
+      return null;
+    }
+  }
+
+  // 1. Transações Financeiras (financial_transactions)
+  static async getFinancialTransactions(): Promise<FinancialTransaction[]> {
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('financial_transactions')
+          .select('*')
+          .order('transaction_date', { ascending: false })
+          .order('created_at', { ascending: false });
+
+        if (!error && data) {
+          const normalized = data.map((item) => ({
+            ...item,
+            amount: Number(item.amount || 0),
+            is_recurring: Boolean(item.is_recurring),
+          })) as FinancialTransaction[];
+          this.set('financial_transactions', normalized);
+          return normalized;
+        }
+      } catch (err) {
+        console.error('Erro ao buscar financial_transactions no Supabase:', err);
+      }
+    }
+    return this.get<FinancialTransaction[]>('financial_transactions', defaultFinancialTransactions);
+  }
+
+  static async addFinancialTransaction(
+    input: Omit<FinancialTransaction, 'id' | 'user_id' | 'created_at'>
+  ): Promise<FinancialTransaction> {
+    const nowIso = new Date().toISOString();
+    const authUserId = await this.getAuthenticatedUserId();
+
+    const newTx: FinancialTransaction = {
+      id: generateUUID(),
+      user_id: authUserId || DEMO_USER_ID,
+      type: input.type,
+      amount: Number(input.amount || 0),
+      description: input.description.trim(),
+      category: input.category,
+      place: input.place ? input.place.trim() : null,
+      payment_method: input.payment_method || 'Pix',
+      transaction_date: input.transaction_date || nowIso.split('T')[0],
+      is_recurring: Boolean(input.is_recurring),
+      notes: input.notes ? input.notes.trim() : null,
+      created_at: nowIso,
+    };
+
+    if (isSupabaseConfigured && supabase && authUserId) {
+      const payload = {
+        id: newTx.id,
+        user_id: authUserId,
+        type: newTx.type,
+        amount: newTx.amount,
+        description: newTx.description,
+        category: newTx.category,
+        place: newTx.place,
+        payment_method: newTx.payment_method,
+        transaction_date: newTx.transaction_date,
+        is_recurring: newTx.is_recurring,
+        notes: newTx.notes,
+        created_at: newTx.created_at,
+      };
+      const { data, error } = await supabase
+        .from('financial_transactions')
+        .insert(payload)
+        .select()
+        .single();
+
+      if (!error && data) {
+        const saved: FinancialTransaction = {
+          ...data,
+          amount: Number(data.amount || 0),
+          is_recurring: Boolean(data.is_recurring),
+        };
+        const current = this.get<FinancialTransaction[]>(
+          'financial_transactions',
+          defaultFinancialTransactions
+        );
+        this.set('financial_transactions', [saved, ...current]);
+        return saved;
+      }
+    }
+
+    const current = await this.getFinancialTransactions();
+    const updated = [newTx, ...current].sort((a, b) =>
+      b.transaction_date.localeCompare(a.transaction_date)
+    );
+    this.set('financial_transactions', updated);
+    return newTx;
+  }
+
+  static async updateFinancialTransaction(
+    id: string,
+    updates: Partial<Omit<FinancialTransaction, 'id' | 'user_id' | 'created_at'>>
+  ): Promise<FinancialTransaction> {
+    const current = await this.getFinancialTransactions();
+    const existing = current.find((t) => t.id === id);
+    if (!existing) throw new Error('Movimentação não encontrada.');
+
+    const updatedTx: FinancialTransaction = {
+      ...existing,
+      ...updates,
+      amount: updates.amount !== undefined ? Number(updates.amount) : existing.amount,
+      description:
+        updates.description !== undefined ? updates.description.trim() : existing.description,
+      place:
+        updates.place !== undefined
+          ? updates.place
+            ? updates.place.trim()
+            : null
+          : existing.place,
+      notes:
+        updates.notes !== undefined
+          ? updates.notes
+            ? updates.notes.trim()
+            : null
+          : existing.notes,
+    };
+
+    if (isSupabaseConfigured && supabase) {
+      await supabase
+        .from('financial_transactions')
+        .update({
+          type: updatedTx.type,
+          amount: updatedTx.amount,
+          description: updatedTx.description,
+          category: updatedTx.category,
+          place: updatedTx.place,
+          payment_method: updatedTx.payment_method,
+          transaction_date: updatedTx.transaction_date,
+          is_recurring: updatedTx.is_recurring,
+          notes: updatedTx.notes,
+        })
+        .eq('id', id);
+    }
+
+    const updatedList = current
+      .map((t) => (t.id === id ? updatedTx : t))
+      .sort((a, b) => b.transaction_date.localeCompare(a.transaction_date));
+    this.set('financial_transactions', updatedList);
+    return updatedTx;
+  }
+
+  static async deleteFinancialTransaction(id: string): Promise<void> {
+    if (isSupabaseConfigured && supabase) {
+      await supabase.from('financial_transactions').delete().eq('id', id);
+    }
+    const current = this.get<FinancialTransaction[]>(
+      'financial_transactions',
+      defaultFinancialTransactions
+    );
+    const updated = current.filter((t) => t.id !== id);
+    this.set('financial_transactions', updated);
+  }
+
+  // 2. Cofrinhos / Metas (financial_goals)
+  static async getFinancialGoals(): Promise<FinancialGoal[]> {
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('financial_goals')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (!error && data) {
+          const normalized = data.map((g) => ({
+            ...g,
+            target_amount: Number(g.target_amount || 0),
+            current_amount: Number(g.current_amount || 0),
+          })) as FinancialGoal[];
+          this.set('financial_goals', normalized);
+          return normalized;
+        }
+      } catch (err) {
+        console.error('Erro ao buscar financial_goals no Supabase:', err);
+      }
+    }
+    return this.get<FinancialGoal[]>('financial_goals', defaultFinancialGoals);
+  }
+
+  static async addFinancialGoal(
+    input: Omit<FinancialGoal, 'id' | 'user_id' | 'created_at'>
+  ): Promise<FinancialGoal> {
+    const nowIso = new Date().toISOString();
+    const authUserId = await this.getAuthenticatedUserId();
+
+    const newGoal: FinancialGoal = {
+      id: generateUUID(),
+      user_id: authUserId || DEMO_USER_ID,
+      name: input.name.trim(),
+      target_amount: Number(input.target_amount || 0),
+      current_amount: Number(input.current_amount || 0),
+      deadline: input.deadline || null,
+      category: input.category || 'Reserva de Emergência',
+      color: input.color || '#06b6d4',
+      notes: input.notes ? input.notes.trim() : null,
+      created_at: nowIso,
+    };
+
+    if (isSupabaseConfigured && supabase && authUserId) {
+      const payload = {
+        id: newGoal.id,
+        user_id: authUserId,
+        name: newGoal.name,
+        target_amount: newGoal.target_amount,
+        current_amount: newGoal.current_amount,
+        deadline: newGoal.deadline,
+        category: newGoal.category,
+        color: newGoal.color,
+        notes: newGoal.notes,
+        created_at: newGoal.created_at,
+      };
+      const { data, error } = await supabase
+        .from('financial_goals')
+        .insert(payload)
+        .select()
+        .single();
+
+      if (!error && data) {
+        const saved: FinancialGoal = {
+          ...data,
+          target_amount: Number(data.target_amount || 0),
+          current_amount: Number(data.current_amount || 0),
+        };
+        const current = this.get<FinancialGoal[]>('financial_goals', defaultFinancialGoals);
+        this.set('financial_goals', [saved, ...current]);
+        return saved;
+      }
+    }
+
+    const current = await this.getFinancialGoals();
+    const updated = [newGoal, ...current];
+    this.set('financial_goals', updated);
+    return newGoal;
+  }
+
+  static async updateFinancialGoal(
+    id: string,
+    updates: Partial<Omit<FinancialGoal, 'id' | 'user_id' | 'created_at'>>
+  ): Promise<FinancialGoal> {
+    const current = await this.getFinancialGoals();
+    const existing = current.find((g) => g.id === id);
+    if (!existing) throw new Error('Cofrinho não encontrado.');
+
+    const updatedGoal: FinancialGoal = {
+      ...existing,
+      ...updates,
+      name: updates.name !== undefined ? updates.name.trim() : existing.name,
+      target_amount:
+        updates.target_amount !== undefined
+          ? Number(updates.target_amount)
+          : existing.target_amount,
+      current_amount:
+        updates.current_amount !== undefined
+          ? Number(updates.current_amount)
+          : existing.current_amount,
+      deadline: updates.deadline !== undefined ? updates.deadline || null : existing.deadline,
+      notes:
+        updates.notes !== undefined
+          ? updates.notes
+            ? updates.notes.trim()
+            : null
+          : existing.notes,
+    };
+
+    if (isSupabaseConfigured && supabase) {
+      await supabase
+        .from('financial_goals')
+        .update({
+          name: updatedGoal.name,
+          target_amount: updatedGoal.target_amount,
+          current_amount: updatedGoal.current_amount,
+          deadline: updatedGoal.deadline,
+          category: updatedGoal.category,
+          color: updatedGoal.color,
+          notes: updatedGoal.notes,
+        })
+        .eq('id', id);
+    }
+
+    const updatedList = current.map((g) => (g.id === id ? updatedGoal : g));
+    this.set('financial_goals', updatedList);
+    return updatedGoal;
+  }
+
+  static async deleteFinancialGoal(id: string): Promise<void> {
+    if (isSupabaseConfigured && supabase) {
+      await supabase.from('financial_goals').delete().eq('id', id);
+    }
+    const currentGoals = this.get<FinancialGoal[]>('financial_goals', defaultFinancialGoals);
+    this.set(
+      'financial_goals',
+      currentGoals.filter((g) => g.id !== id)
+    );
+
+    const currentContribs = this.get<FinancialGoalContribution[]>(
+      'financial_goal_contributions',
+      defaultFinancialGoalContributions
+    );
+    this.set(
+      'financial_goal_contributions',
+      currentContribs.filter((c) => c.goal_id !== id)
+    );
+  }
+
+  // 3. Histórico de Aportes e Resgates (financial_goal_contributions)
+  static async getFinancialGoalContributions(
+    goalId?: string
+  ): Promise<FinancialGoalContribution[]> {
+    if (isSupabaseConfigured && supabase) {
+      try {
+        let query = supabase
+          .from('financial_goal_contributions')
+          .select('*')
+          .order('contribution_date', { ascending: false })
+          .order('created_at', { ascending: false });
+
+        if (goalId) {
+          query = query.eq('goal_id', goalId);
+        }
+
+        const { data, error } = await query;
+        if (!error && data) {
+          const normalized = data.map((c) => ({
+            ...c,
+            amount: Number(c.amount || 0),
+          })) as FinancialGoalContribution[];
+
+          if (!goalId) {
+            this.set('financial_goal_contributions', normalized);
+          }
+          return normalized;
+        }
+      } catch (err) {
+        console.error('Erro ao buscar financial_goal_contributions no Supabase:', err);
+      }
+    }
+
+    const all = this.get<FinancialGoalContribution[]>(
+      'financial_goal_contributions',
+      defaultFinancialGoalContributions
+    );
+    return goalId ? all.filter((c) => c.goal_id === goalId) : all;
+  }
+
+  static async addFinancialGoalContribution(input: {
+    goal_id: string;
+    type: 'deposit' | 'withdraw';
+    amount: number;
+    contribution_date?: string;
+    notes?: string | null;
+  }): Promise<{ contribution: FinancialGoalContribution; updatedGoal: FinancialGoal }> {
+    const nowIso = new Date().toISOString();
+    const authUserId = await this.getAuthenticatedUserId();
+    const numericAmount = Math.abs(Number(input.amount || 0));
+
+    if (numericAmount <= 0) {
+      throw new Error('O valor deve ser maior que zero.');
+    }
+
+    const goals = await this.getFinancialGoals();
+    const targetGoal = goals.find((g) => g.id === input.goal_id);
+    if (!targetGoal) {
+      throw new Error('Cofrinho não encontrado.');
+    }
+
+    const delta = input.type === 'deposit' ? numericAmount : -numericAmount;
+    const newCurrentAmount = Math.max(0, Number((targetGoal.current_amount + delta).toFixed(2)));
+
+    const newContribution: FinancialGoalContribution = {
+      id: generateUUID(),
+      user_id: authUserId || DEMO_USER_ID,
+      goal_id: input.goal_id,
+      type: input.type,
+      amount: numericAmount,
+      contribution_date: input.contribution_date || nowIso.split('T')[0],
+      notes: input.notes ? input.notes.trim() : null,
+      created_at: nowIso,
+    };
+
+    if (isSupabaseConfigured && supabase && authUserId) {
+      await supabase.from('financial_goal_contributions').insert({
+        id: newContribution.id,
+        user_id: authUserId,
+        goal_id: newContribution.goal_id,
+        type: newContribution.type,
+        amount: newContribution.amount,
+        contribution_date: newContribution.contribution_date,
+        notes: newContribution.notes,
+        created_at: newContribution.created_at,
+      });
+    }
+
+    const allContribs = this.get<FinancialGoalContribution[]>(
+      'financial_goal_contributions',
+      defaultFinancialGoalContributions
+    );
+    this.set('financial_goal_contributions', [newContribution, ...allContribs]);
+
+    const updatedGoal = await this.updateFinancialGoal(input.goal_id, {
+      current_amount: newCurrentAmount,
+    });
+
+    return { contribution: newContribution, updatedGoal };
+  }
+
+  static async deleteFinancialGoalContribution(contributionId: string): Promise<void> {
+    const allContribs = await this.getFinancialGoalContributions();
+    const target = allContribs.find((c) => c.id === contributionId);
+
+    if (isSupabaseConfigured && supabase) {
+      await supabase.from('financial_goal_contributions').delete().eq('id', contributionId);
+    }
+
+    if (target) {
+      const goals = await this.getFinancialGoals();
+      const goal = goals.find((g) => g.id === target.goal_id);
+      if (goal) {
+        const reverseDelta = target.type === 'deposit' ? -target.amount : target.amount;
+        const recalculated = Math.max(0, Number((goal.current_amount + reverseDelta).toFixed(2)));
+        await this.updateFinancialGoal(goal.id, { current_amount: recalculated });
+      }
+    }
+
+    this.set(
+      'financial_goal_contributions',
+      allContribs.filter((c) => c.id !== contributionId)
+    );
+  }
+
+  // 4. Visão de Futuro & Planejamento (financial_vision_plans)
+  static async getFinancialVisionPlans(): Promise<FinancialVisionPlan[]> {
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('financial_vision_plans')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (!error && data) {
+          const normalized = data.map((p) => ({
+            ...p,
+            target_year: p.target_year ? Number(p.target_year) : null,
+            target_amount:
+              p.target_amount !== null && p.target_amount !== undefined
+                ? Number(p.target_amount)
+                : null,
+          })) as FinancialVisionPlan[];
+          this.set('financial_vision_plans', normalized);
+          return normalized;
+        }
+      } catch (err) {
+        console.error('Erro ao buscar financial_vision_plans no Supabase:', err);
+      }
+    }
+    return this.get<FinancialVisionPlan[]>('financial_vision_plans', defaultFinancialVisionPlans);
+  }
+
+  static async addFinancialVisionPlan(
+    input: Omit<FinancialVisionPlan, 'id' | 'user_id' | 'created_at' | 'updated_at'>
+  ): Promise<FinancialVisionPlan> {
+    const nowIso = new Date().toISOString();
+    const authUserId = await this.getAuthenticatedUserId();
+
+    const newPlan: FinancialVisionPlan = {
+      id: generateUUID(),
+      user_id: authUserId || DEMO_USER_ID,
+      title: input.title.trim(),
+      horizon: input.horizon,
+      target_year: input.target_year ? Number(input.target_year) : null,
+      target_amount:
+        input.target_amount !== null && input.target_amount !== undefined && input.target_amount > 0
+          ? Number(input.target_amount)
+          : null,
+      content: input.content.trim(),
+      status: input.status || 'planning',
+      updated_at: nowIso,
+      created_at: nowIso,
+    };
+
+    if (isSupabaseConfigured && supabase && authUserId) {
+      const payload = {
+        id: newPlan.id,
+        user_id: authUserId,
+        title: newPlan.title,
+        horizon: newPlan.horizon,
+        target_year: newPlan.target_year,
+        target_amount: newPlan.target_amount,
+        content: newPlan.content,
+        status: newPlan.status,
+        updated_at: newPlan.updated_at,
+        created_at: newPlan.created_at,
+      };
+      const { data, error } = await supabase
+        .from('financial_vision_plans')
+        .insert(payload)
+        .select()
+        .single();
+
+      if (!error && data) {
+        const saved: FinancialVisionPlan = {
+          ...data,
+          target_year: data.target_year ? Number(data.target_year) : null,
+          target_amount:
+            data.target_amount !== null && data.target_amount !== undefined
+              ? Number(data.target_amount)
+              : null,
+        };
+        const current = this.get<FinancialVisionPlan[]>(
+          'financial_vision_plans',
+          defaultFinancialVisionPlans
+        );
+        this.set('financial_vision_plans', [saved, ...current]);
+        return saved;
+      }
+    }
+
+    const current = await this.getFinancialVisionPlans();
+    const updated = [newPlan, ...current];
+    this.set('financial_vision_plans', updated);
+    return newPlan;
+  }
+
+  static async updateFinancialVisionPlan(
+    id: string,
+    updates: Partial<Omit<FinancialVisionPlan, 'id' | 'user_id' | 'created_at'>>
+  ): Promise<FinancialVisionPlan> {
+    const current = await this.getFinancialVisionPlans();
+    const existing = current.find((p) => p.id === id);
+    if (!existing) throw new Error('Plano de visão não encontrado.');
+
+    const nowIso = new Date().toISOString();
+    const updatedPlan: FinancialVisionPlan = {
+      ...existing,
+      ...updates,
+      title: updates.title !== undefined ? updates.title.trim() : existing.title,
+      content: updates.content !== undefined ? updates.content.trim() : existing.content,
+      target_year:
+        updates.target_year !== undefined
+          ? updates.target_year
+            ? Number(updates.target_year)
+            : null
+          : existing.target_year,
+      target_amount:
+        updates.target_amount !== undefined
+          ? updates.target_amount && Number(updates.target_amount) > 0
+            ? Number(updates.target_amount)
+            : null
+          : existing.target_amount,
+      updated_at: nowIso,
+    };
+
+    if (isSupabaseConfigured && supabase) {
+      await supabase
+        .from('financial_vision_plans')
+        .update({
+          title: updatedPlan.title,
+          horizon: updatedPlan.horizon,
+          target_year: updatedPlan.target_year,
+          target_amount: updatedPlan.target_amount,
+          content: updatedPlan.content,
+          status: updatedPlan.status,
+          updated_at: updatedPlan.updated_at,
+        })
+        .eq('id', id);
+    }
+
+    const updatedList = current.map((p) => (p.id === id ? updatedPlan : p));
+    this.set('financial_vision_plans', updatedList);
+    return updatedPlan;
+  }
+
+  static async deleteFinancialVisionPlan(id: string): Promise<void> {
+    if (isSupabaseConfigured && supabase) {
+      await supabase.from('financial_vision_plans').delete().eq('id', id);
+    }
+    const current = this.get<FinancialVisionPlan[]>(
+      'financial_vision_plans',
+      defaultFinancialVisionPlans
+    );
+    this.set(
+      'financial_vision_plans',
+      current.filter((p) => p.id !== id)
+    );
+  }
 }
 
 const defaultMockExams: MockExam[] = [];
 const defaultErrorNotebook: ErrorNotebookItem[] = [];
 const defaultScheduledReviews: ScheduledReview[] = [];
+const defaultFinancialTransactions: FinancialTransaction[] = [];
+const defaultFinancialGoals: FinancialGoal[] = [];
+const defaultFinancialGoalContributions: FinancialGoalContribution[] = [];
+const defaultFinancialVisionPlans: FinancialVisionPlan[] = [];
 
 

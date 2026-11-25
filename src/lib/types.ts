@@ -383,4 +383,85 @@ export interface GeminiErrorClarificationResponse {
   key_legal_point?: string;
 }
 
+// ----------------------------------------------------
+// MÓDULO FINANCEIRO (TRANSAÇÕES, COFRINHOS, VISÃO DE FUTURO & INDICADORES)
+// ----------------------------------------------------
+
+export type FinancialTransactionType = 'income' | 'expense';
+
+export type PaymentMethodType =
+  | 'Pix'
+  | 'Crédito'
+  | 'Débito'
+  | 'Dinheiro'
+  | 'Boleto'
+  | 'Transferência';
+
+export interface FinancialTransaction {
+  id: string;
+  user_id?: string;
+  type: FinancialTransactionType;
+  amount: number;
+  description: string;
+  category: string;
+  place?: string | null;
+  payment_method: string;
+  transaction_date: string; // YYYY-MM-DD
+  is_recurring: boolean;
+  notes?: string | null;
+  created_at: string;
+}
+
+export interface FinancialGoal {
+  id: string;
+  user_id?: string;
+  name: string;
+  target_amount: number;
+  current_amount: number;
+  deadline?: string | null; // YYYY-MM-DD
+  category?: string | null;
+  color?: string | null;
+  notes?: string | null;
+  created_at: string;
+}
+
+export type ContributionType = 'deposit' | 'withdraw';
+
+export interface FinancialGoalContribution {
+  id: string;
+  user_id?: string;
+  goal_id: string;
+  type: ContributionType;
+  amount: number;
+  contribution_date: string; // YYYY-MM-DD
+  notes?: string | null;
+  created_at: string;
+}
+
+export type FinancialVisionHorizon = 'short' | 'medium' | 'long' | 'freedom';
+export type FinancialVisionStatus = 'planning' | 'in_progress' | 'achieved';
+
+export interface FinancialVisionPlan {
+  id: string;
+  user_id?: string;
+  title: string;
+  horizon: FinancialVisionHorizon;
+  target_year?: number | null;
+  target_amount?: number | null;
+  content: string;
+  status: FinancialVisionStatus;
+  updated_at: string;
+  created_at: string;
+}
+
+export interface BrazilFinanceIndicators {
+  selic: number;
+  cdi: number;
+  ipca: number;
+  isFallback: boolean;
+  updatedAt: string;
+  source: string;
+}
+
+
 
