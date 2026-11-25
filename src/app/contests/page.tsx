@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   GraduationCap,
   Timer,
@@ -67,10 +68,30 @@ import {
 } from '@/lib/types';
 import { OmniStore } from '@/lib/store';
 
-export default function ContestsPage() {
-  const [activeNavTab, setActiveNavTab] = useState<
-    'edital' | 'simulados' | 'caderno_erros' | 'srs_revisoes' | 'pomodoro' | 'taf' | 'gemini'
-  >('edital');
+type ContestNavTab =
+  | 'edital'
+  | 'simulados'
+  | 'caderno_erros'
+  | 'srs_revisoes'
+  | 'pomodoro'
+  | 'taf'
+  | 'gemini';
+
+const VALID_CONTEST_TABS: ContestNavTab[] = [
+  'edital',
+  'simulados',
+  'caderno_erros',
+  'srs_revisoes',
+  'pomodoro',
+  'taf',
+  'gemini',
+];
+
+function ContestsPageContent() {
+  const searchParams = useSearchParams();
+  const rawTab = searchParams.get('tab') as ContestNavTab | null;
+  const activeNavTab: ContestNavTab =
+    rawTab && VALID_CONTEST_TABS.includes(rawTab) ? rawTab : 'edital';
 
   // Multi-Contest Data States
   const [contests, setContests] = useState<Contest[]>([]);
@@ -934,93 +955,6 @@ export default function ContestsPage() {
                 <div className="text-[10px] text-slate-400 font-semibold uppercase mt-0.5">Revisões Hoje</div>
               </div>
             </div>
-          </div>
-
-          {/* Navigation Tabs Bar */}
-          <div className="flex items-center gap-2 mt-8 pt-6 border-t border-slate-800/80 overflow-x-auto pb-1">
-            <button
-              onClick={() => setActiveNavTab('edital')}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex-shrink-0 ${
-                activeNavTab === 'edital'
-                  ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white shadow-lg shadow-cyan-500/20'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <BookOpen className="h-4 w-4" />
-              Edital Verticalizado ({editalProgressPct}%)
-            </button>
-
-            <button
-              onClick={() => setActiveNavTab('simulados')}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex-shrink-0 ${
-                activeNavTab === 'simulados'
-                  ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white shadow-lg shadow-cyan-500/20'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <FileQuestion className="h-4 w-4 text-amber-400" />
-              Motor de Simulados ({mockExams.length})
-            </button>
-
-            <button
-              onClick={() => setActiveNavTab('caderno_erros')}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex-shrink-0 ${
-                activeNavTab === 'caderno_erros'
-                  ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white shadow-lg shadow-cyan-500/20'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <BookMarked className="h-4 w-4 text-rose-400" />
-              Caderno de Erros ({errorNotebook.filter((e) => !e.is_mastered).length})
-            </button>
-
-            <button
-              onClick={() => setActiveNavTab('srs_revisoes')}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex-shrink-0 ${
-                activeNavTab === 'srs_revisoes'
-                  ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white shadow-lg shadow-cyan-500/20'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <BrainCircuit className="h-4 w-4 text-purple-400" />
-              Revisão Espaçada SRS ({dueReviewsCount})
-            </button>
-
-            <button
-              onClick={() => setActiveNavTab('pomodoro')}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex-shrink-0 ${
-                activeNavTab === 'pomodoro'
-                  ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white shadow-lg shadow-cyan-500/20'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <Timer className="h-4 w-4" />
-              Pomodoro
-            </button>
-
-            <button
-              onClick={() => setActiveNavTab('taf')}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex-shrink-0 ${
-                activeNavTab === 'taf'
-                  ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white shadow-lg shadow-cyan-500/20'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <Dumbbell className="h-4 w-4" />
-              Índices TAF ({tafRequirements.length})
-            </button>
-
-            <button
-              onClick={() => setActiveNavTab('gemini')}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex-shrink-0 ${
-                activeNavTab === 'gemini'
-                  ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white shadow-lg shadow-cyan-500/20'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <Brain className="h-4 w-4 text-cyan-300 animate-pulse" />
-              Tutor Gemini IA
-            </button>
           </div>
         </div>
       )}
@@ -2439,5 +2373,13 @@ export default function ContestsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function ContestsPage() {
+  return (
+    <Suspense fallback={<div className="h-64 rounded-2xl bg-slate-900/50 animate-pulse" />}>
+      <ContestsPageContent />
+    </Suspense>
   );
 }

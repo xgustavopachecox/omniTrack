@@ -1,13 +1,17 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Flame, Shield, Trophy, Zap, Award } from 'lucide-react';
+import { Flame, Trophy, Zap, Award, Menu } from 'lucide-react';
 import { Profile } from '@/lib/types';
 import { OmniStore } from '@/lib/store';
 import { getXpForNextLevel, getRankTitle, GAMIFICATION_EVENT_NAME } from '@/lib/gamification';
 import { UserMenu } from './UserMenu';
 
-export function GamificationHeader() {
+export function GamificationHeader({
+  onOpenMobileMenu,
+}: {
+  onOpenMobileMenu?: () => void;
+}) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [pulseXp, setPulseXp] = useState(false);
 
@@ -53,8 +57,19 @@ export function GamificationHeader() {
   return (
     <header className="sticky top-0 z-20 w-full bg-slate-950/80 backdrop-blur-xl border-b border-slate-800/80 px-4 md:px-8 py-2.5 transition-all">
       <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
-        {/* User Info & Rank Badge */}
-        <div className="flex items-center gap-3">
+        {/* User Info & Rank Badge + Mobile Hamburger Trigger */}
+        <div className="flex items-center gap-2.5 sm:gap-3">
+          {onOpenMobileMenu && (
+            <button
+              type="button"
+              onClick={onOpenMobileMenu}
+              className="md:hidden p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-200 hover:text-cyan-400 transition active:scale-95"
+              aria-label="Abrir menu de navegação"
+              title="Menu de Navegação"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+          )}
           <div className="relative group">
             <div className="h-10 w-10 rounded-full bg-gradient-to-tr from-cyan-500 via-indigo-600 to-purple-600 p-[2px] shadow-lg shadow-cyan-500/20">
               <div className="h-full w-full rounded-full bg-slate-900 flex items-center justify-center font-bold text-cyan-400 text-sm">

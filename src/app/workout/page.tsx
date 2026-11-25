@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { OmniStore } from '@/lib/store';
 import {
   WorkoutSession,
@@ -68,8 +69,10 @@ interface DynamicExerciseInput {
   observation: string;
 }
 
-export default function WorkoutPage() {
-  const [activeTab, setActiveTab] = useState<'sessions' | 'prs'>('sessions');
+function WorkoutPageContent() {
+  const searchParams = useSearchParams();
+  const activeTab: 'sessions' | 'prs' =
+    searchParams.get('tab') === 'prs' ? 'prs' : 'sessions';
   const [sessions, setSessions] = useState<WorkoutSession[]>([]);
   const [prs, setPrs] = useState<UserPR[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -450,16 +453,20 @@ export default function WorkoutPage() {
             </span>
           </div>
           <h1 className="text-2xl font-extrabold text-white tracking-tight">
-            Módulo de Treino & Quadro de PRs
+            {activeTab === 'prs'
+              ? 'Vitrine de Recordes Pessoais (PRs)'
+              : 'Módulo de Treino & Sessões'}
           </h1>
           <p className="text-sm text-slate-400 mt-1">
-            Registre sessões por voz/IA ou manualmente e acompanhe o volume acumulado por blocos semanais.
+            {activeTab === 'prs'
+              ? 'Consulte e gerencie suas maiores cargas históricas por grupamento muscular.'
+              : 'Registre sessões por voz/IA ou manualmente e acompanhe o volume acumulado por blocos semanais.'}
           </p>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-center gap-3">
+        <div className="flex items-center gap-3 self-start md:self-center">
           {/* Weekly Streak Badge */}
-          <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-2xl bg-slate-950/90 border border-amber-500/40 shadow-lg shadow-amber-500/10">
+          <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-2xl bg-slate-950/90 border border-amber-500/40 shadow-lg shadow-amber-500/10">
             <div className="p-1.5 rounded-xl bg-amber-500/20 text-amber-400">
               <Zap className="h-4 w-4 fill-amber-400 animate-pulse" />
             </div>
@@ -471,30 +478,6 @@ export default function WorkoutPage() {
                 {weeklyStreakData.currentWeekWorkouts}/{weeklyStreakData.targetWorkoutsPerWeek} treinos na semana {weeklyStreakData.isCurrentWeekGoalMet ? '✓ Goal!' : ''}
               </span>
             </div>
-          </div>
-
-          {/* Tab Switcher Buttons */}
-          <div className="flex items-center p-1 bg-slate-950/80 rounded-xl border border-slate-800">
-            <button
-              onClick={() => setActiveTab('sessions')}
-              className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 ${activeTab === 'sessions'
-                  ? 'bg-gradient-to-r from-cyan-500 to-emerald-500 text-slate-950 shadow-md'
-                  : 'text-slate-400 hover:text-white'
-                }`}
-            >
-              <Layers className="h-4 w-4" />
-              Sessões ({sessions.length})
-            </button>
-            <button
-              onClick={() => setActiveTab('prs')}
-              className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 ${activeTab === 'prs'
-                  ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 shadow-md'
-                  : 'text-slate-400 hover:text-white'
-                }`}
-            >
-              <Trophy className="h-4 w-4" />
-              Vitrine de PRs ({prs.length})
-            </button>
           </div>
         </div>
       </div>
@@ -1194,5 +1177,13 @@ export default function WorkoutPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function WorkoutPage() {
+  return (
+    <Suspense fallback={<div className="h-64 rounded-2xl bg-slate-900/50 animate-pulse" />}>
+      <WorkoutPageContent />
+    </Suspense>
   );
 }

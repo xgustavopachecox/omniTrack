@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { OmniStore } from '@/lib/store';
 import { SecondBrainNote, NoteCategory } from '@/lib/types';
 import {
@@ -27,9 +28,20 @@ const categories: { label: string; value: 'all' | NoteCategory; icon: any }[] = 
   { label: 'Ideias', value: 'ideias', icon: Lightbulb },
 ];
 
-export default function SecondBrainPage() {
+const VALID_NOTE_CATEGORIES: NoteCategory[] = [
+  'treino',
+  'estudos',
+  'pensamentos',
+  'ideias',
+];
+
+function SecondBrainPageContent() {
+  const searchParams = useSearchParams();
+  const rawTab = searchParams.get('tab') as NoteCategory | null;
+  const activeTab: 'all' | NoteCategory =
+    rawTab && VALID_NOTE_CATEGORIES.includes(rawTab) ? rawTab : 'all';
+
   const [notes, setNotes] = useState<SecondBrainNote[]>([]);
-  const [activeTab, setActiveTab] = useState<'all' | NoteCategory>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [editingNote, setEditingNote] = useState<SecondBrainNote | null>(null);
@@ -312,30 +324,19 @@ export default function SecondBrainPage() {
         </form>
       </div>
 
-      {/* Category Tabs & Search Bar */}
+      {/* Active Category Indicator & Search Bar (Sub-navigation moved to Expandable Sidebar) */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
-          {categories.map((cat) => {
-            const Icon = cat.icon;
-            const isActive = activeTab === cat.value;
-            return (
-              <button
-                key={cat.value}
-                onClick={() => setActiveTab(cat.value)}
-                className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 transition shrink-0 ${
-                  isActive
-                    ? 'bg-slate-800 text-white border border-slate-700 shadow-md'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
-                }`}
-              >
-                <Icon className={`h-3.5 w-3.5 ${isActive ? 'text-cyan-400' : ''}`} />
-                <span>{cat.label}</span>
-              </button>
-            );
-          })}
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+            Exibindo:
+          </span>
+          <span className="px-3 py-1 rounded-xl bg-slate-800/90 border border-slate-700 text-xs font-extrabold text-cyan-300">
+            {categories.find((c) => c.value === activeTab)?.label || 'Todas as Notas'}{' '}
+            ({filteredNotes.length})
+          </span>
         </div>
 
-        <div className="relative min-w-[240px]">
+        <div className="relative min-w-[260px]">
           <Search className="h-4 w-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
@@ -539,5 +540,13 @@ export default function SecondBrainPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function SecondBrainPage() {
+  return (
+    <Suspense fallback={<div className="h-64 rounded-2xl bg-slate-900/50 animate-pulse" />}>
+      <SecondBrainPageContent />
+    </Suspense>
   );
 }

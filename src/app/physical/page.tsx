@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { OmniStore } from '@/lib/store';
 import { BodyMetric, PhysiqueAssessment, MuscleScoreDetail } from '@/lib/types';
 import {
@@ -78,8 +79,13 @@ const getScoreColor = (score: number | null) => {
   };
 };
 
-export default function PhysicalPage() {
-  const [activeTab, setActiveTab] = useState<'ia-coach' | 'weight-history'>('ia-coach');
+function PhysicalPageContent() {
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const activeTab: 'ia-coach' | 'weight-history' =
+    tabParam === 'medidas' || tabParam === 'weight-history'
+      ? 'weight-history'
+      : 'ia-coach';
   
   // Weight metrics state
   const [metrics, setMetrics] = useState<BodyMetric[]>([]);
@@ -269,49 +275,32 @@ export default function PhysicalPage() {
 
   return (
     <div className="space-y-8 animate-fadeIn max-w-6xl mx-auto pb-12">
-      {/* Header & Tab Switcher */}
+      {/* Header Banner */}
       <div className="glass-panel p-6 border-slate-800 bg-gradient-to-r from-slate-900/90 via-cyan-950/40 to-slate-900/90 flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="p-1.5 rounded-lg bg-cyan-500/10 text-cyan-400">
-              <Brain className="h-4 w-4" />
+              {activeTab === 'weight-history' ? (
+                <Scale className="h-4 w-4" />
+              ) : (
+                <Brain className="h-4 w-4" />
+              )}
             </span>
             <span className="text-xs font-semibold text-cyan-400 uppercase tracking-wider">
               Módulo de Físico & Visão Computacional
             </span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight flex items-center gap-2">
-            Avaliação Fisiológica Honesta <Sparkles className="h-5 w-5 text-amber-400 animate-pulse" />
+            {activeTab === 'weight-history'
+              ? 'Curva de Peso & Medidas Corporais'
+              : 'Avaliação Fisiológica Honesta'}{' '}
+            <Sparkles className="h-5 w-5 text-amber-400 animate-pulse" />
           </h1>
-          <p className="text-sm text-slate-400 mt-1 max-w-xl">
-            IA Coach com Visão Computacional (Gemini Multimodal). Diagnóstico sincero, notas quantitativas por agrupamento muscular e plano de treino corretivo.
+          <p className="text-sm text-slate-400 mt-1 max-w-2xl">
+            {activeTab === 'weight-history'
+              ? 'Acompanhe a evolução do seu peso corporal, fotos comparativas e anotações de medidas ao longo do tempo.'
+              : 'IA Coach com Visão Computacional (Gemini Multimodal). Diagnóstico sincero, notas quantitativas por agrupamento muscular e plano de treino corretivo.'}
           </p>
-        </div>
-
-        {/* Tab Buttons */}
-        <div className="flex bg-slate-950/80 p-1.5 rounded-2xl border border-slate-800/80 self-start md:self-auto">
-          <button
-            onClick={() => setActiveTab('ia-coach')}
-            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
-              activeTab === 'ia-coach'
-                ? 'bg-gradient-to-r from-cyan-500 to-emerald-500 text-slate-950 shadow-lg shadow-cyan-500/20'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <Brain className="h-4 w-4" />
-            <span>Avaliação de Físico (IA Coach)</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('weight-history')}
-            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
-              activeTab === 'weight-history'
-                ? 'bg-gradient-to-r from-cyan-500 to-emerald-500 text-slate-950 shadow-lg shadow-cyan-500/20'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <Scale className="h-4 w-4" />
-            <span>Curva de Peso & Medidas</span>
-          </button>
         </div>
       </div>
 
@@ -950,5 +939,13 @@ export default function PhysicalPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function PhysicalPage() {
+  return (
+    <Suspense fallback={<div className="h-64 rounded-2xl bg-slate-900/50 animate-pulse" />}>
+      <PhysicalPageContent />
+    </Suspense>
   );
 }
