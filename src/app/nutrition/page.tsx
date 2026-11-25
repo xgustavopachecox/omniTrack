@@ -1,17 +1,24 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { OmniStore } from '@/lib/store';
-import { NutritionLog, Profile, WaterLog, GeminiNutritionResponse } from '@/lib/types';
+import {
+  NutritionLog,
+  Profile,
+  WaterLog,
+  GeminiNutritionResponse,
+  GeminiNutritionPhotoResponse,
+  DetectedMealItem,
+} from '@/lib/types';
 import { calculateMacroPercentages } from '@/lib/consistency';
+import { XP_TABLE } from '@/lib/gamification';
 import { VoiceTextInput } from '@/components/ui/VoiceTextInput';
 import {
   Utensils,
   Flame,
   Apple,
   Sparkles,
-  Bot,
   Clock,
   Trash2,
   Edit2,
@@ -23,18 +30,89 @@ import {
   ChevronUp,
   Calendar,
   X,
-  AlertCircle,
-  TrendingUp,
   TrendingDown,
-  ArrowUpRight,
-  ArrowDownRight,
-  Award,
-  Layers,
-  Scale,
-  Zap,
+  Camera,
+  Image as ImageIcon,
+  Loader2,
+  Info,
 } from 'lucide-react';
 
 const mealTypeOptions = ['Café da Manhã', 'Almoço', 'Lanche', 'Jantar', 'Ceia', 'Outro'];
+
+function getSuggestedMealTypeByTime(): string {
+  const hour = new Date().getHours();
+  if (hour >= 5 && hour < 11) return 'Café da Manhã';
+  if (hour >= 11 && hour < 15) return 'Almoço';
+  if (hour >= 15 && hour < 18) return 'Lanche';
+  if (hour >= 18 && hour < 22) return 'Jantar';
+  return 'Ceia';
+}
+
+/**
+ * Redimensiona a imagem no cliente usando HTML5 <canvas> para no máximo 1024px no maior lado
+ * e converte para image/jpeg com qualidade 0.75 (reduzindo fotos de ~8MB para ~150-300KB).
+ */
+async function compressMealImage(
+  file: File,
+  maxDimension = 1024,
+  quality = 0.75
+): Promise<{ blob: Blob; previewUrl: string; sizeKb: number }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Falha ao ler arquivo de imagem.'));
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const img = new window.Image();
+      img.onerror = () =>
+        reject(new Error('Não foi possível decodificar a imagem selecionada.'));
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDimension || height > maxDimension) {
+          if (width >= height) {
+            height = Math.round((height * maxDimension) / width);
+            width = maxDimension;
+          } else {
+            width = Math.round((width * maxDimension) / height);
+            height = maxDimension;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Contexto 2D do Canvas indisponível no navegador.'));
+          return;
+        }
+
+        // Fundo branco para imagens PNG transparentes antes de converter para JPEG
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+
+        const compressedPreviewUrl = canvas.toDataURL('image/jpeg', quality);
+        canvas.toBlob(
+          (blob) => {
+            if (!blob) {
+              reject(new Error('Falha ao comprimir imagem para JPEG.'));
+              return;
+            }
+            resolve({
+              blob,
+              previewUrl: compressedPreviewUrl,
+              sizeKb: Math.max(1, Math.round(blob.size / 1024)),
+            });
+          },
+          'image/jpeg',
+          quality
+        );
+      };
+      img.src = dataUrl;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 // Week Calculation Helpers
 function getISOWeekDetails(dateStr: string) {
@@ -80,12 +158,30 @@ function NutritionPageContent() {
   const [isMealModalOpen, setIsMealModalOpen] = useState<boolean>(false);
   const [editingLogId, setEditingLogId] = useState<string | null>(null);
   const [formDate, setFormDate] = useState<string>(new Date().toISOString().split('T')[0]);
-  const [formMealType, setFormMealType] = useState<string>('Almoço');
+  const [formMealType, setFormMealType] = useState<string>(getSuggestedMealTypeByTime);
   const [formMealName, setFormMealName] = useState<string>('');
   const [formCalories, setFormCalories] = useState<number>(500);
   const [formProtein, setFormProtein] = useState<number>(40);
   const [formCarbs, setFormCarbs] = useState<number>(60);
   const [formFats, setFormFats] = useState<number>(15);
+  const [modalDetectedItems, setModalDetectedItems] = useState<DetectedMealItem[]>([]);
+
+  // Photo AI Meal Analyzer States
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
+  const [photoBlob, setPhotoBlob] = useState<Blob | null>(null);
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
+  const [photoSizeKb, setPhotoSizeKb] = useState<number>(0);
+  const [photoMealType, setPhotoMealType] = useState<string>(getSuggestedMealTypeByTime);
+  const [photoNotes, setPhotoNotes] = useState<string>('');
+  const [autoSavePhotoMeal, setAutoSavePhotoMeal] = useState<boolean>(true);
+  const [isCompressingPhoto, setIsCompressingPhoto] = useState<boolean>(false);
+  const [isAnalyzingPhoto, setIsAnalyzingPhoto] = useState<boolean>(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const [lastPhotoResult, setLastPhotoResult] = useState<{
+    analysis: GeminiNutritionPhotoResponse;
+    savedLog?: NutritionLog;
+  } | null>(null);
 
   const loadData = async () => {
     try {
@@ -178,8 +274,9 @@ function NutritionPageContent() {
         raw_input: data.feedback,
       });
 
+      await OmniStore.addXp(XP_TABLE.LOG_MEAL, 'Refeição Registrada com IA');
       await loadData();
-      showToast('Refeição computada e macros atualizados!');
+      showToast('Refeição computada e macros atualizados! (+30 XP)');
     } catch (err: any) {
       console.error(err);
       showToast(err.message || 'Erro ao processar refeição. Tente novamente.');
@@ -188,16 +285,136 @@ function NutritionPageContent() {
     }
   };
 
+  // Photo Capture & Compression Handler
+  const handleSelectPhotoFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    setPhotoError(null);
+    setLastPhotoResult(null);
+    setIsCompressingPhoto(true);
+
+    try {
+      const { blob, previewUrl, sizeKb } = await compressMealImage(file, 1024, 0.75);
+      setPhotoBlob(blob);
+      setPhotoPreviewUrl(previewUrl);
+      setPhotoSizeKb(sizeKb);
+      setPhotoMealType(getSuggestedMealTypeByTime());
+    } catch (err: any) {
+      console.error('Erro ao comprimir foto:', err);
+      setPhotoError(err?.message || 'Não foi possível processar a imagem selecionada.');
+    } finally {
+      setIsCompressingPhoto(false);
+    }
+  };
+
+  const handleClearPhoto = () => {
+    setPhotoBlob(null);
+    setPhotoPreviewUrl(null);
+    setPhotoSizeKb(0);
+    setPhotoNotes('');
+    setPhotoError(null);
+  };
+
+  const handleAnalyzePhotoMeal = async () => {
+    if (!photoBlob || isAnalyzingPhoto) return;
+
+    setIsAnalyzingPhoto(true);
+    setPhotoError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('image', photoBlob, 'refeicao.jpg');
+      formData.append('meal_type', photoMealType);
+      if (photoNotes.trim()) {
+        formData.append('notes', photoNotes.trim());
+      }
+
+      // Envia FormData sem header Content-Type manual
+      const res = await fetch('/api/gemini/nutrition-photo', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data) {
+        throw new Error(
+          data?.error || 'Falha ao analisar foto da refeição com a IA.'
+        );
+      }
+
+      const analysis = data as GeminiNutritionPhotoResponse;
+      const todayDate = new Date().toISOString().split('T')[0];
+      const fatVal = Number(analysis.fat_g ?? analysis.fats_g ?? 0);
+
+      const itemsSummary =
+        analysis.items_detected && analysis.items_detected.length > 0
+          ? analysis.items_detected
+              .map((i) => `${i.name} (~${i.estimated_grams}g)`)
+              .join(', ')
+          : analysis.meal_name;
+
+      if (autoSavePhotoMeal) {
+        const savedLog = await OmniStore.addNutritionLog({
+          meal_name: analysis.meal_name,
+          meal_type: photoMealType,
+          log_date: todayDate,
+          calories: Math.round(Number(analysis.calories || 0)),
+          protein_g: Number(analysis.protein_g || 0),
+          carbs_g: Number(analysis.carbs_g || 0),
+          fats_g: fatVal,
+          raw_input: `📸 Foto IA: ${itemsSummary}. ${analysis.confidence_note || ''}`,
+        });
+
+        await OmniStore.addXp(
+          XP_TABLE.LOG_MEAL,
+          `Refeição por Foto IA (${analysis.meal_name})`
+        );
+
+        await loadData();
+        setLastPhotoResult({ analysis, savedLog });
+        handleClearPhoto();
+        showToast(
+          `Prato "${analysis.meal_name}" (${analysis.calories} kcal) salvo direto no diário! (+30 XP)`
+        );
+      } else {
+        // Preenche o modal de refeição para o usuário revisar e confirmar em 1 clique
+        setEditingLogId(null);
+        setFormDate(todayDate);
+        setFormMealType(photoMealType);
+        setFormMealName(analysis.meal_name);
+        setFormCalories(Math.round(Number(analysis.calories || 0)));
+        setFormProtein(Number(analysis.protein_g || 0));
+        setFormCarbs(Number(analysis.carbs_g || 0));
+        setFormFats(fatVal);
+        setModalDetectedItems(analysis.items_detected || []);
+        setLastPhotoResult({ analysis });
+        setIsMealModalOpen(true);
+        handleClearPhoto();
+        showToast('Análise concluída! Revise os valores e confirme em 1 clique.');
+      }
+    } catch (err: any) {
+      console.error('Erro na análise por foto:', err);
+      setPhotoError(
+        err?.message || 'Erro ao analisar foto do prato. Tente novamente.'
+      );
+    } finally {
+      setIsAnalyzingPhoto(false);
+    }
+  };
+
   // Manual Meal Modal Openers
   const openNewMealModal = () => {
     setEditingLogId(null);
     setFormDate(new Date().toISOString().split('T')[0]);
-    setFormMealType('Almoço');
+    setFormMealType(getSuggestedMealTypeByTime());
     setFormMealName('');
     setFormCalories(500);
     setFormProtein(40);
     setFormCarbs(60);
     setFormFats(15);
+    setModalDetectedItems([]);
     setIsMealModalOpen(true);
   };
 
@@ -210,6 +427,7 @@ function NutritionPageContent() {
     setFormProtein(Number(log.protein_g));
     setFormCarbs(Number(log.carbs_g));
     setFormFats(Number(log.fats_g));
+    setModalDetectedItems([]);
     setIsMealModalOpen(true);
   };
 
@@ -238,9 +456,15 @@ function NutritionPageContent() {
           protein_g: formProtein,
           carbs_g: formCarbs,
           fats_g: formFats,
-          raw_input: 'Refeição registrada manualmente.',
+          raw_input:
+            modalDetectedItems.length > 0
+              ? `📸 Foto IA revisada: ${modalDetectedItems
+                  .map((i) => `${i.name} (~${i.estimated_grams}g)`)
+                  .join(', ')}`
+              : 'Refeição registrada manualmente.',
         });
-        showToast('Nova refeição adicionada!');
+        await OmniStore.addXp(XP_TABLE.LOG_MEAL, 'Refeição Registrada');
+        showToast('Nova refeição adicionada! (+30 XP)');
       }
 
       setIsMealModalOpen(false);
@@ -497,37 +721,326 @@ function NutritionPageContent() {
         </div>
       )}
 
-      {/* Top Action Bar: AI Voice/Text Logger + Manual Entry Button */}
-      {activeTab === 'diario' ? (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-              <Sparkles className="h-3.5 w-3.5 text-cyan-400" />
-              Registrar Refeição (Voz / IA ou Formulário Manual)
-            </label>
+      {/* Inputs ocultos globais para Câmera Traseira e Galeria */}
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handleSelectPhotoFile}
+        className="hidden"
+      />
+      <input
+        ref={galleryInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleSelectPhotoFile}
+        className="hidden"
+      />
 
-            <button
-              onClick={openNewMealModal}
-              className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 text-slate-950 font-extrabold text-xs flex items-center gap-1.5 hover:opacity-90 transition shadow-md shadow-cyan-500/20"
-            >
-              <Plus className="h-4 w-4 stroke-[3]" />
-              + Refeição Manual
-            </button>
+      {/* Top Action Bar: Photo AI Analyzer + Voice/Text Logger + Manual Entry Button */}
+      {activeTab === 'diario' ? (
+        <div className="space-y-5">
+          {/* CARD EM DESTAQUE: ANALISAR PRATO POR FOTO (IA) */}
+          <div className="glass-card p-5 sm:p-6 rounded-2xl border-l-4 border-l-emerald-500 space-y-4 relative overflow-hidden">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[10px] font-extrabold uppercase tracking-wider flex items-center gap-1">
+                    <Camera className="h-3 w-3" />
+                    Visão Computacional TACO / IBGE
+                  </span>
+                </div>
+                <h2 className="text-lg font-extrabold text-white flex items-center gap-2">
+                  Analisar Prato por Foto (IA)
+                </h2>
+                <p className="text-xs text-slate-400">
+                  Tire uma foto da sua refeição ou escolha da galeria. A IA identifica os alimentos, estima as porções em gramas e salva direto no seu diário.
+                </p>
+              </div>
+
+              {/* Botões de Captura: Tirar Foto (Câmera) e Galeria */}
+              <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => cameraInputRef.current?.click()}
+                  disabled={isCompressingPhoto || isAnalyzingPhoto}
+                  className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 text-slate-950 font-extrabold text-xs hover:opacity-95 transition shadow-lg shadow-emerald-500/20 flex items-center gap-2 disabled:opacity-50"
+                >
+                  <Camera className="h-4 w-4 stroke-[2.5]" />
+                  Tirar Foto
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => galleryInputRef.current?.click()}
+                  disabled={isCompressingPhoto || isAnalyzingPhoto}
+                  className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 font-bold text-xs transition flex items-center gap-2 disabled:opacity-50"
+                >
+                  <ImageIcon className="h-4 w-4 text-cyan-400" />
+                  Galeria
+                </button>
+              </div>
+            </div>
+
+            {isCompressingPhoto && (
+              <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 text-xs text-cyan-300 flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin text-cyan-400" />
+                <span>Otimizando imagem para envio rápido...</span>
+              </div>
+            )}
+
+            {photoError && (
+              <div className="p-3 rounded-xl bg-rose-950/60 border border-rose-500/40 text-xs text-rose-300 font-semibold flex items-center justify-between gap-2">
+                <span>{photoError}</span>
+                <button
+                  type="button"
+                  onClick={() => setPhotoError(null)}
+                  className="text-rose-400 hover:text-white"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+
+            {/* Preview da Foto Selecionada + Contexto Opcional + Toggle de Inserção Direta */}
+            {photoPreviewUrl && (
+              <div className="p-4 rounded-2xl bg-slate-950/90 border border-emerald-500/30 space-y-4 animate-fadeIn">
+                <div className="flex flex-col sm:flex-row gap-4">
+                  {/* Miniatura da Foto */}
+                  <div className="relative w-full sm:w-36 h-36 rounded-xl overflow-hidden border border-slate-700 bg-slate-900 shrink-0">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={photoPreviewUrl}
+                      alt="Preview do Prato"
+                      className="w-full h-full object-cover"
+                    />
+                    <span className="absolute bottom-1.5 left-1.5 px-2 py-0.5 rounded bg-slate-950/85 text-[10px] font-bold text-emerald-400 border border-emerald-500/30">
+                      JPEG • {photoSizeKb} KB
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleClearPhoto}
+                      disabled={isAnalyzingPhoto}
+                      className="absolute top-1.5 right-1.5 p-1 rounded-lg bg-slate-950/85 text-slate-300 hover:text-rose-400 border border-slate-700"
+                      title="Remover foto"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  {/* Campos de Contexto: Tipo de Refeição, Detalhe Opcional e Toggle */}
+                  <div className="flex-1 space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-300 block mb-1">
+                          Tipo de Refeição
+                        </label>
+                        <select
+                          value={photoMealType}
+                          onChange={(e) => setPhotoMealType(e.target.value)}
+                          disabled={isAnalyzingPhoto}
+                          className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none focus:border-emerald-500"
+                        >
+                          {mealTypeOptions.map((opt) => (
+                            <option key={opt} value={opt}>
+                              {opt}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="text-[11px] font-bold text-slate-300 block mb-1">
+                          Detalhe opcional (ajuda na precisão)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="Ex: 150g de arroz, preparado com azeite, 2 ovos..."
+                          value={photoNotes}
+                          onChange={(e) => setPhotoNotes(e.target.value)}
+                          disabled={isAnalyzingPhoto}
+                          className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Toggle: Salvar direto no diário após analisar */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                      <label className="inline-flex items-center gap-2.5 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={autoSavePhotoMeal}
+                          onChange={(e) => setAutoSavePhotoMeal(e.target.checked)}
+                          disabled={isAnalyzingPhoto}
+                          className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-emerald-500 focus:ring-emerald-500"
+                        />
+                        <div>
+                          <span className="text-xs font-bold text-white block">
+                            Salvar direto no diário após analisar
+                          </span>
+                          <span className="text-[10px] text-slate-400 block">
+                            {autoSavePhotoMeal
+                              ? 'Ativado: grava imediatamente no Supabase e permite editar depois.'
+                              : 'Desativado: preenche o formulário para você revisar antes de salvar.'}
+                          </span>
+                        </div>
+                      </label>
+
+                      <button
+                        type="button"
+                        onClick={handleAnalyzePhotoMeal}
+                        disabled={isAnalyzingPhoto}
+                        className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 text-slate-950 font-extrabold text-xs hover:opacity-95 transition shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        {isAnalyzingPhoto ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin text-slate-950" />
+                            <span>Identificando Alimentos...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="h-4 w-4" />
+                            <span>Analisar Prato com IA</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Card de Resultado Recente da Foto Analisada (com Itens Detectados + Botão Rápido Editar) */}
+            {lastPhotoResult && (
+              <div className="p-4 rounded-2xl bg-emerald-950/25 border border-emerald-500/35 space-y-3 animate-fadeIn">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                    <div>
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-400 block">
+                        {lastPhotoResult.savedLog
+                          ? 'Refeição Salva Automaticamente no Diário'
+                          : 'Alimentos Detectados pela IA'}
+                      </span>
+                      <h4 className="text-sm font-extrabold text-white">
+                        {lastPhotoResult.analysis.meal_name}
+                      </h4>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {lastPhotoResult.savedLog && (
+                      <button
+                        type="button"
+                        onClick={() => openEditMealModal(lastPhotoResult.savedLog!)}
+                        className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center gap-1.5 transition"
+                      >
+                        <Edit2 className="h-3.5 w-3.5" />
+                        Editar / Ajustar Gramas
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setLastPhotoResult(null)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-white"
+                      title="Fechar resumo"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Resumo de Macros Detectados */}
+                <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
+                  <span className="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                    {lastPhotoResult.analysis.calories} kcal
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
+                    Proteínas: {lastPhotoResult.analysis.protein_g}g
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                    Carboidratos: {lastPhotoResult.analysis.carbs_g}g
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+                    Gorduras: {lastPhotoResult.analysis.fat_g}g
+                  </span>
+                </div>
+
+                {/* Lista de Itens Detectados no Prato */}
+                {lastPhotoResult.analysis.items_detected &&
+                  lastPhotoResult.analysis.items_detected.length > 0 && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 pt-1">
+                      {lastPhotoResult.analysis.items_detected.map((item, idx) => (
+                        <div
+                          key={idx}
+                          className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800/90 flex items-center justify-between text-xs"
+                        >
+                          <div className="min-w-0 pr-2">
+                            <p className="font-bold text-slate-200 truncate">
+                              {item.name}
+                            </p>
+                            <span className="text-[10px] text-slate-400">
+                              Porção est.: ~{item.estimated_grams}g
+                            </span>
+                          </div>
+                          <span className="font-extrabold text-amber-400 shrink-0">
+                            {item.calories} kcal
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                {lastPhotoResult.analysis.confidence_note && (
+                  <p className="text-[11px] text-slate-400 flex items-center gap-1.5 pt-0.5">
+                    <Info className="h-3.5 w-3.5 text-cyan-400 shrink-0" />
+                    <span>{lastPhotoResult.analysis.confidence_note}</span>
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
-          <VoiceTextInput
-            placeholder="Ex: Almocei 200g de peito de frango, 200g de arroz integral e salada de alface..."
-            onSendText={(text) => handleProcessInput({ text })}
-            onSendAudio={(blob) => {
-              const formData = new FormData();
-              formData.append('audio', blob, 'nutrition.webm');
-              return handleProcessInput(formData);
-            }}
-            isLoading={isLoading}
-          />
+          {/* Registro por Voz / Texto IA + Botão Manual */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                <Sparkles className="h-3.5 w-3.5 text-cyan-400" />
+                Ou Registre por Voz / Texto (IA) ou Manualmente
+              </label>
+
+              <button
+                onClick={openNewMealModal}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 text-slate-950 font-extrabold text-xs flex items-center gap-1.5 hover:opacity-90 transition shadow-md shadow-cyan-500/20"
+              >
+                <Plus className="h-4 w-4 stroke-[3]" />
+                + Refeição Manual
+              </button>
+            </div>
+
+            <VoiceTextInput
+              placeholder="Ex: Almocei 200g de peito de frango, 200g de arroz integral e salada de alface..."
+              onSendText={(text) => handleProcessInput({ text })}
+              onSendAudio={(blob) => {
+                const formData = new FormData();
+                formData.append('audio', blob, 'nutrition.webm');
+                return handleProcessInput(formData);
+              }}
+              isLoading={isLoading}
+            />
+          </div>
         </div>
       ) : (
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => cameraInputRef.current?.click()}
+            className="px-4 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold text-xs flex items-center gap-1.5 hover:bg-emerald-500/25 transition"
+          >
+            <Camera className="h-4 w-4" />
+            Analisar Foto IA
+          </button>
           <button
             onClick={openNewMealModal}
             className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 text-slate-950 font-extrabold text-xs flex items-center gap-1.5 hover:opacity-90 transition shadow-md shadow-cyan-500/20"
@@ -883,6 +1396,24 @@ function NutritionPageContent() {
             </div>
 
             <form onSubmit={handleSaveMeal} className="space-y-4">
+              {modalDetectedItems.length > 0 && (
+                <div className="p-3 rounded-xl bg-emerald-950/30 border border-emerald-500/30 space-y-1.5">
+                  <span className="text-[10px] font-extrabold text-emerald-400 uppercase tracking-wider block">
+                    Itens Detectados na Foto (Tabela TACO/IBGE):
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {modalDetectedItems.map((it, idx) => (
+                      <span
+                        key={idx}
+                        className="px-2 py-0.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px] text-slate-200"
+                      >
+                        {it.name} (~{it.estimated_grams}g • {it.calories} kcal)
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-slate-300 block mb-1">Data da Refeição</label>

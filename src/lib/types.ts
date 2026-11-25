@@ -240,6 +240,24 @@ export interface GeminiNutritionResponse {
   feedback: string;
 }
 
+export interface DetectedMealItem {
+  name: string;
+  estimated_grams: number;
+  calories: number;
+}
+
+export interface GeminiNutritionPhotoResponse {
+  meal_name: string;
+  meal_type?: string;
+  calories: number;
+  protein_g: number;
+  carbs_g: number;
+  fat_g: number;
+  fats_g?: number;
+  items_detected: DetectedMealItem[];
+  confidence_note: string;
+}
+
 export interface GeminiWorkoutSessionExerciseResponse {
   exercise_name: string;
   muscle_group: string;
